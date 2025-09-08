@@ -1,0 +1,252 @@
+const Message = require("../models/Message");
+const { validationResult } = require("express-validator");
+
+const getConversation = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { userId } = req.params;
+    const currentUser = req.user.userId;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await Promise.all([
+      Message.find({
+        $or: [
+          { sender: currentUser, recipient: userId },
+          { sender: userId, recipient: currentUser },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("sender", "name email")
+        .populate("recipient", "name email"),
+      Message.countDocuments({
+        $or: [
+          { sender: currentUser, recipient: userId },
+          { sender: userId, recipient: currentUser },
+        ],
+      }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: messages.reverse(),
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrevious: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching conversation:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch conversation",
+      error: error.message,
+    });
+  }
+};
+
+const getGroupConversation = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { groupId } = req.params;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await Promise.all([
+      Message.find({
+        group: groupId,
+        type: "group",
+      })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("sender", "name email")
+        .populate("group", "name"),
+      Message.countDocuments({
+        group: groupId,
+        type: "group",
+      }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: messages.reverse(),
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrevious: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching group conversation:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch group conversation",
+      error: error.message,
+    });
+  }
+};
+
+const getConversations = async (req, res) => {
+  try {
+    const currentUser = req.user.userId;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+    const skip = (page - 1) * limit;
+
+    // Get distinct user IDs that the current user has messaged with
+    const userMessages = await Message.aggregate([
+      {
+        $match: {
+          $or: [{ sender: currentUser }, { recipient: currentUser }],
+        },
+      },
+      {
+        $project: {
+          otherUser: {
+            $cond: [{ $eq: ["$sender", currentUser] }, "$recipient", "$sender"],
+          },
+          message: "$$ROOT",
+        },
+      },
+      {
+        $sort: { "message.createdAt": -1 },
+      },
+      {
+        $group: {
+          _id: "$otherUser",
+          latestMessage: { $first: "$message" },
+          unreadCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$message.recipient", currentUser] },
+                    { $ne: ["$message.status", "read"] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      { $unwind: "$user" },
+      {
+        $project: {
+          _id: 0,
+          user: {
+            _id: "$user._id",
+            name: "$user.name",
+            email: "$user.email",
+            avatar: "$user.avatar",
+          },
+          latestMessage: 1,
+          unreadCount: 1,
+        },
+      },
+    ]);
+
+    const total = await Message.distinct("recipient", {
+      $or: [{ sender: currentUser }, { recipient: currentUser }],
+    }).countDocuments();
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: userMessages,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrevious: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching conversations:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch conversations",
+      error: error.message,
+    });
+  }
+};
+
+const markMessagesAsRead = async (req, res) => {
+  try {
+    const { messageIds } = req.body;
+    const currentUser = req.user.userId;
+
+    if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide message IDs to mark as read",
+      });
+    }
+
+    await Message.updateMany(
+      {
+        _id: { $in: messageIds },
+        recipient: currentUser,
+        status: { $ne: "read" },
+      },
+      { $set: { status: "read", readAt: new Date() } },
+    );
+
+    res.json({
+      success: true,
+      message: "Messages marked as read",
+    });
+  } catch (error) {
+    console.error("Error marking messages as read:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark messages as read",
+      error: error.message,
+    });
+  }
+};
+
+module.exports = {
+  getConversation,
+  getGroupConversation,
+  getConversations,
+  markMessagesAsRead,
+};
