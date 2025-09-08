@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const messageSchema = new mongoose.Schema(
   {
+    content: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     sender: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -16,11 +21,6 @@ const messageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Group",
       default: null,
-    },
-    content: {
-      type: String,
-      trim: true,
-      default: "",
     },
     type: {
       type: String,
@@ -64,7 +64,10 @@ const messageSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  },
+  }
 );
+
+// Create text index for search functionality
+messageSchema.index({ content: "text" });
 
 module.exports = mongoose.model("Message", messageSchema);
