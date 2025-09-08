@@ -227,7 +227,7 @@ const markMessagesAsRead = async (req, res) => {
         recipient: currentUser,
         status: { $ne: "read" },
       },
-      { $set: { status: "read", readAt: new Date() } },
+      { $set: { status: "read", readAt: new Date() } }
     );
 
     res.json({
@@ -244,9 +244,97 @@ const markMessagesAsRead = async (req, res) => {
   }
 };
 
+const searchMessages = async (req, res) => {
+  try {
+    const { query, type, userId, groupId } = req.query;
+    const currentUser = req.user.userId;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+    const skip = (page - 1) * limit;
+
+    if (!query || query.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query is required",
+      });
+    }
+
+    // Build search query based on message type (direct or group)
+    let searchQuery = {
+      $text: { $search: query },
+    };
+
+    if (type === "direct") {
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required for direct messages",
+        });
+      }
+      searchQuery.$and = [
+        {
+          $or: [
+            { sender: currentUser, recipient: userId },
+            { sender: userId, recipient: currentUser },
+          ],
+        },
+      ];
+    } else if (type === "group") {
+      if (!groupId) {
+        return res.status(400).json({
+          success: false,
+          message: "Group ID is required for group messages",
+        });
+      }
+      searchQuery.group = groupId;
+    } else {
+      // Search across all user's conversations
+      searchQuery.$or = [
+        { sender: currentUser },
+        { recipient: currentUser },
+        { "messageStatus.user": currentUser },
+      ];
+    }
+
+    const [messages, total] = await Promise.all([
+      Message.find(searchQuery)
+        .sort({ score: { $meta: "textScore" } })
+        .skip(skip)
+        .limit(limit)
+        .populate("sender", "name email")
+        .populate("recipient", "name email")
+        .populate("group", "name"),
+      Message.countDocuments(searchQuery),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      data: messages,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrevious: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Error searching messages:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to search messages",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getConversation,
   getGroupConversation,
   getConversations,
   markMessagesAsRead,
+  searchMessages,
 };
