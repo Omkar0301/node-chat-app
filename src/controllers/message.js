@@ -16,9 +16,14 @@ const getConversation = async (req, res) => {
 
     const [messages, total] = await Promise.all([
       Message.find({
-        $or: [
-          { sender: currentUser, recipient: userId },
-          { sender: userId, recipient: currentUser },
+        $and: [
+          {
+            $or: [
+              { sender: currentUser, recipient: userId },
+              { sender: userId, recipient: currentUser },
+            ],
+          },
+          { deletedFor: { $ne: currentUser } },
         ],
       })
         .sort({ createdAt: -1 })
@@ -27,9 +32,14 @@ const getConversation = async (req, res) => {
         .populate("sender", "name email")
         .populate("recipient", "name email"),
       Message.countDocuments({
-        $or: [
-          { sender: currentUser, recipient: userId },
-          { sender: userId, recipient: currentUser },
+        $and: [
+          {
+            $or: [
+              { sender: currentUser, recipient: userId },
+              { sender: userId, recipient: currentUser },
+            ],
+          },
+          { deletedFor: { $ne: currentUser } },
         ],
       }),
     ]);
@@ -72,8 +82,11 @@ const getGroupConversation = async (req, res) => {
 
     const [messages, total] = await Promise.all([
       Message.find({
-        group: groupId,
-        type: "group",
+        $and: [
+          { group: groupId },
+          { type: "group" },
+          { deletedFor: { $ne: req.user.userId } },
+        ],
       })
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -81,8 +94,11 @@ const getGroupConversation = async (req, res) => {
         .populate("sender", "name email")
         .populate("group", "name"),
       Message.countDocuments({
-        group: groupId,
-        type: "group",
+        $and: [
+          { group: groupId },
+          { type: "group" },
+          { deletedFor: { $ne: req.user.userId } },
+        ],
       }),
     ]);
 
@@ -227,7 +243,7 @@ const markMessagesAsRead = async (req, res) => {
         recipient: currentUser,
         status: { $ne: "read" },
       },
-      { $set: { status: "read", readAt: new Date() } }
+      { $set: { status: "read", readAt: new Date() } },
     );
 
     res.json({
@@ -261,7 +277,11 @@ const searchMessages = async (req, res) => {
 
     // Build search query based on message type (direct or group)
     let searchQuery = {
-      $text: { $search: query },
+      $and: [
+        { $text: { $search: query } },
+        { deletedFor: { $ne: currentUser } },
+        { isDeleted: { $ne: true } },
+      ],
     };
 
     if (type === "direct") {
@@ -271,14 +291,12 @@ const searchMessages = async (req, res) => {
           message: "User ID is required for direct messages",
         });
       }
-      searchQuery.$and = [
-        {
-          $or: [
-            { sender: currentUser, recipient: userId },
-            { sender: userId, recipient: currentUser },
-          ],
-        },
-      ];
+      searchQuery.$and.push({
+        $or: [
+          { sender: currentUser, recipient: userId },
+          { sender: userId, recipient: currentUser },
+        ],
+      });
     } else if (type === "group") {
       if (!groupId) {
         return res.status(400).json({
@@ -286,14 +304,16 @@ const searchMessages = async (req, res) => {
           message: "Group ID is required for group messages",
         });
       }
-      searchQuery.group = groupId;
+      searchQuery.$and.push({ group: groupId });
     } else {
       // Search across all user's conversations
-      searchQuery.$or = [
-        { sender: currentUser },
-        { recipient: currentUser },
-        { "messageStatus.user": currentUser },
-      ];
+      searchQuery.$and.push({
+        $or: [
+          { sender: currentUser },
+          { recipient: currentUser },
+          { "messageStatus.user": currentUser },
+        ],
+      });
     }
 
     const [messages, total] = await Promise.all([

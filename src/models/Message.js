@@ -61,10 +61,29 @@ const messageSchema = new mongoose.Schema(
       },
     ],
     readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    // Soft delete flags
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    // Per-user hide/clear (messages hidden for specific users)
+    deletedFor: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+    ],
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Create text index for search functionality

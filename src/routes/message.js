@@ -27,7 +27,7 @@ router.get(
       .withMessage("Limit must be between 1 and 50"),
   ],
   validate,
-  getConversation
+  getConversation,
 );
 
 router.get(
@@ -45,7 +45,7 @@ router.get(
       .withMessage("Limit must be between 1 and 50"),
   ],
   validate,
-  getGroupConversation
+  getGroupConversation,
 );
 
 router.get(
@@ -62,7 +62,7 @@ router.get(
       .withMessage("Limit must be between 1 and 50"),
   ],
   validate,
-  getConversations
+  getConversations,
 );
 
 router.patch(
@@ -74,7 +74,7 @@ router.patch(
       .withMessage("At least one message ID is required"),
   ],
   validate,
-  markMessagesAsRead
+  markMessagesAsRead,
 );
 
 router.get(
@@ -104,7 +104,7 @@ router.get(
       .withMessage("Limit must be between 1 and 50"),
   ],
   validate,
-  searchMessages
+  searchMessages,
 );
 
 module.exports = router;
