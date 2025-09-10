@@ -16,7 +16,7 @@ async function setupOnConnect(io, socket) {
       online: true,
     });
 
-    // Fetch undelivered messages when user comes online
+    // Fetch undelivered DIRECT messages when user comes online
     const messages = await Message.find({
       recipient: socket.user._id,
       status: "sent",
@@ -39,6 +39,53 @@ async function setupOnConnect(io, socket) {
 
       console.log(
         `Delivered ${messages.length} pending messages to user ${socket.user._id}`,
+      );
+    }
+
+    // Fetch undelivered GROUP messages for this user (per-recipient status)
+    const groupMessages = await Message.find({
+      type: "group",
+      messageStatus: {
+        $elemMatch: { user: socket.user._id, status: "sent" },
+      },
+    }).lean();
+
+    if (groupMessages.length > 0) {
+      for (const gm of groupMessages) {
+        // Update this user's delivery status for the message
+        await Message.updateOne(
+          { _id: gm._id, "messageStatus.user": socket.user._id },
+          {
+            $set: {
+              "messageStatus.$.status": "delivered",
+              "messageStatus.$.deliveredAt": new Date(),
+            },
+          },
+        );
+        // Emit to the user
+        socket.emit("group:receive", {
+          ...gm,
+          messageStatus: gm.messageStatus,
+        });
+
+        // Notify the original sender that this user has now received the message
+        if (gm.sender) {
+          const senderId = gm.sender.toString();
+          if (senderId) {
+            // Notify across all of the sender's sockets via their user room
+            io.to(`user_${senderId}`).emit("group:status", {
+              groupId: gm.group?.toString?.() || gm.group,
+              messageId: gm._id,
+              userId: socket.user._id,
+              status: "delivered",
+              deliveredAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
+
+      console.log(
+        `Delivered ${groupMessages.length} pending group messages to user ${socket.user._id}`,
       );
     }
   } catch (err) {

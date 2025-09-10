@@ -34,6 +34,72 @@ function registerGroupHandlers(io, socket) {
         groupId,
         message: `Successfully joined group ${group.name}`,
       });
+
+      // Mark group message as read by the current user
+      socket.on("group:read", async (data, callback) => {
+        try {
+          const { groupId, messageId } = data || {};
+          if (!groupId || !messageId)
+            return callback?.({
+              success: false,
+              error: "groupId and messageId required",
+            });
+
+          const group = await Group.findById(groupId);
+          if (!group)
+            return callback?.({ success: false, error: "Group not found" });
+
+          const userIdStr = socket.user._id.toString();
+          const isMember = (group.members || []).some(
+            (m) => m.toString() === userIdStr,
+          );
+          if (!isMember)
+            return callback?.({ success: false, error: "Not a group member" });
+
+          // Update per-recipient read status
+          const updateRes = await Message.updateOne(
+            {
+              _id: messageId,
+              group: groupId,
+              type: "group",
+              "messageStatus.user": socket.user._id,
+            },
+            {
+              $set: {
+                "messageStatus.$.status": "read",
+                "messageStatus.$.readAt": new Date(),
+              },
+              $addToSet: { readBy: socket.user._id },
+            },
+          );
+
+          if (updateRes.modifiedCount > 0) {
+            // Notify the sender that this user has read the message
+            const msg = await Message.findById(messageId).lean();
+            if (msg && msg.sender) {
+              const senderIdStr = msg.sender.toString();
+              if (senderIdStr) {
+                // Notify across all of the sender's sockets via their user room
+                io.to(`user_${senderIdStr}`).emit("group:status", {
+                  groupId,
+                  messageId,
+                  userId: socket.user._id,
+                  status: "read",
+                  readAt: new Date().toISOString(),
+                });
+              }
+            }
+          }
+
+          callback?.({ success: true });
+        } catch (error) {
+          console.error("Error marking group message as read:", error);
+          callback?.({
+            success: false,
+            error: error.message || "Failed to mark as read",
+          });
+        }
+      });
     } catch (error) {
       console.error(`Error joining group ${groupId}:`, error);
       callback?.({
@@ -65,6 +131,11 @@ function registerGroupHandlers(io, socket) {
         );
       }
 
+      // Prepare per-recipient status for group members (exclude sender)
+      const memberIds = (group.members || [])
+        .map((m) => m.toString())
+        .filter((id) => id !== socket.userId);
+
       const message = new Message({
         sender: socket.user._id,
         group: groupId,
@@ -73,11 +144,40 @@ function registerGroupHandlers(io, socket) {
         status: "sent",
         attachments: attachments || [],
         replyTo: replyTo || null,
+        messageStatus: memberIds.map((id) => ({ user: id, status: "sent" })),
       });
 
       await message.save();
 
-      io.to(`group_${groupId}`).emit("group:receive", message);
+      // Deliver to online members immediately and mark as delivered for them
+      for (const memberId of memberIds) {
+        const memberSocketId = connections.get(memberId);
+        if (memberSocketId) {
+          // Update this member's delivery status
+          await Message.updateOne(
+            { _id: message._id, "messageStatus.user": memberId },
+            {
+              $set: {
+                "messageStatus.$.status": "delivered",
+                "messageStatus.$.deliveredAt": new Date(),
+              },
+            },
+          );
+          // Send the message to the member's user room (covers multiple tabs/devices)
+          io.to(`user_${memberId}`).emit("group:receive", message);
+
+          // Notify the sender about delivery to this member
+          io.to(`user_${socket.userId}`).emit("group:status", {
+            groupId,
+            messageId: message._id,
+            userId: memberId,
+            status: "delivered",
+            deliveredAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Acknowledge to sender with the saved message
       socket.emit("group:sent", message);
 
       callback?.({ success: true, data: message });
