@@ -79,8 +79,7 @@ function registerGroupHandlers(io, socket) {
             if (msg && msg.sender) {
               const senderIdStr = msg.sender.toString();
               if (senderIdStr) {
-                // Notify across all of the sender's sockets via their user room
-                io.to(`user_${senderIdStr}`).emit("group:status", {
+                io.to(`group_${groupId}`).emit("group:status", {
                   groupId,
                   messageId,
                   userId: socket.user._id,
@@ -265,55 +264,6 @@ function registerGroupHandlers(io, socket) {
       callback({ success: false, error: err.message });
     }
   });
-
-  // Rename group (admins or creator only)
-  // socket.on("group:rename", async ({ groupId, name }, callback) => {
-  //   try {
-  //     if (!groupId) throw new Error("groupId required");
-  //     if (typeof name !== "string") throw new Error("name must be a string");
-  //     const trimmed = name.trim();
-  //     if (!trimmed) throw new Error("Group name cannot be empty");
-  //     if (trimmed.length > 50)
-  //       throw new Error("Group name cannot be longer than 50 characters");
-
-  //     const group = await Group.findById(groupId);
-  //     if (!group) throw new Error("Group not found");
-
-  //     const userIdStr = socket.user._id.toString();
-  //     const isMember = (group.members || [])
-  //       .map((m) => m.toString())
-  //       .includes(userIdStr);
-  //     if (!isMember) throw new UnauthorizedError("Not a member of this group");
-
-  //     const isAdmin = (group.admins || [])
-  //       .map((a) => a.toString())
-  //       .includes(userIdStr);
-  //     const isCreator = group.createdBy.toString() === userIdStr;
-  //     if (!isAdmin && !isCreator)
-  //       throw new UnauthorizedError("Only admins can rename the group");
-
-  //     if (group.name === trimmed) {
-  //       callback?.({ success: true, data: group });
-  //       return;
-  //     }
-
-  //     group.name = trimmed;
-  //     await group.save();
-
-  //     const payload = {
-  //       groupId: group._id,
-  //       name: group.name,
-  //       updatedBy: socket.user._id,
-  //       updatedAt: new Date().toISOString(),
-  //     };
-
-  //     io.to(`group_${groupId}`).emit("group:nameUpdated", payload);
-  //     callback?.({ success: true, data: group });
-  //   } catch (error) {
-  //     console.error("Error renaming group:", error);
-  //     callback?.({ success: false, error: error.message });
-  //   }
-  // });
 
   socket.on("group:rename", async ({ groupId, name }, callback) => {
     try {

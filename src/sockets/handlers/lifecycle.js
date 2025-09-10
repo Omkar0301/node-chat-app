@@ -68,19 +68,17 @@ async function setupOnConnect(io, socket) {
           messageStatus: gm.messageStatus,
         });
 
-        // Notify the original sender that this user has now received the message
-        if (gm.sender) {
-          const senderId = gm.sender.toString();
-          if (senderId) {
-            // Notify across all of the sender's sockets via their user room
-            io.to(`user_${senderId}`).emit("group:status", {
-              groupId: gm.group?.toString?.() || gm.group,
-              messageId: gm._id,
-              userId: socket.user._id,
-              status: "delivered",
-              deliveredAt: new Date().toISOString(),
-            });
-          }
+        // Notify the group that this user has received the message
+        const groupId = gm.group?.toString?.() || gm.group;
+        if (groupId) {
+          // Emit to the group room instead of individual user
+          io.to(`group_${groupId}`).emit("group:status", {
+            groupId,
+            messageId: gm._id,
+            userId: socket.user._id,
+            status: "delivered",
+            deliveredAt: new Date().toISOString(),
+          });
         }
       }
 
