@@ -34,71 +34,6 @@ function registerGroupHandlers(io, socket) {
         groupId,
         message: `Successfully joined group ${group.name}`,
       });
-
-      // Mark group message as read by the current user
-      socket.on("group:read", async (data, callback) => {
-        try {
-          const { groupId, messageId } = data || {};
-          if (!groupId || !messageId)
-            return callback?.({
-              success: false,
-              error: "groupId and messageId required",
-            });
-
-          const group = await Group.findById(groupId);
-          if (!group)
-            return callback?.({ success: false, error: "Group not found" });
-
-          const userIdStr = socket.user._id.toString();
-          const isMember = (group.members || []).some(
-            (m) => m.toString() === userIdStr,
-          );
-          if (!isMember)
-            return callback?.({ success: false, error: "Not a group member" });
-
-          // Update per-recipient read status
-          const updateRes = await Message.updateOne(
-            {
-              _id: messageId,
-              group: groupId,
-              type: "group",
-              "messageStatus.user": socket.user._id,
-            },
-            {
-              $set: {
-                "messageStatus.$.status": "read",
-                "messageStatus.$.readAt": new Date(),
-              },
-              $addToSet: { readBy: socket.user._id },
-            },
-          );
-
-          if (updateRes.modifiedCount > 0) {
-            // Notify the sender that this user has read the message
-            const msg = await Message.findById(messageId).lean();
-            if (msg && msg.sender) {
-              const senderIdStr = msg.sender.toString();
-              if (senderIdStr) {
-                io.to(`group_${groupId}`).emit("group:status", {
-                  groupId,
-                  messageId,
-                  userId: socket.user._id,
-                  status: "read",
-                  readAt: new Date().toISOString(),
-                });
-              }
-            }
-          }
-
-          callback?.({ success: true });
-        } catch (error) {
-          console.error("Error marking group message as read:", error);
-          callback?.({
-            success: false,
-            error: error.message || "Failed to mark as read",
-          });
-        }
-      });
     } catch (error) {
       console.error(`Error joining group ${groupId}:`, error);
       callback?.({
@@ -166,12 +101,26 @@ function registerGroupHandlers(io, socket) {
           io.to(`user_${memberId}`).emit("group:receive", message);
 
           // Notify the sender about delivery to this member
+          // Get user details for the member
+          const member = await User.findById(memberId, {
+            username: 1,
+            email: 1,
+            profilePicture: 1,
+            online: 1,
+            lastSeen: 1,
+          });
+
           io.to(`user_${socket.userId}`).emit("group:status", {
             groupId,
             messageId: message._id,
-            userId: memberId,
-            status: "delivered",
-            deliveredAt: new Date().toISOString(),
+            updatedBy: memberId,
+            status: {
+              [memberId]: {
+                status: "delivered",
+                deliveredAt: new Date().toISOString(),
+                user: member ? member.getPublicProfile() : null,
+              },
+            },
           });
         }
       }
@@ -185,6 +134,137 @@ function registerGroupHandlers(io, socket) {
       callback?.({
         success: false,
         error: error.message || "Failed to send group message",
+      });
+    }
+  });
+
+  // Group read receipts
+  socket.on("group:read", async (data, callback) => {
+    try {
+      const { groupId, messageIds } = data || {};
+      if (
+        !groupId ||
+        !messageIds ||
+        !Array.isArray(messageIds) ||
+        messageIds.length === 0
+      ) {
+        throw new Error("groupId and messageIds (array) are required");
+      }
+
+      const group = await Group.findById(groupId);
+      if (!group) {
+        throw new Error("Group not found");
+      }
+
+      const currentUserId = socket.user._id.toString();
+      const isMember = group.members.some(
+        (member) => member.toString() === currentUserId,
+      );
+      if (!isMember) {
+        throw new UnauthorizedError("You are not a member of this group");
+      }
+
+      // Fetch user details for all group members to include in status
+      const users = await User.find(
+        { _id: { $in: group.members } },
+        { username: 1, email: 1, profilePicture: 1, online: 1, lastSeen: 1 },
+      );
+      const userMap = new Map(
+        users.map((u) => [u._id.toString(), u.getPublicProfile()]),
+      );
+
+      for (const messageId of messageIds) {
+        const message = await Message.findOne({
+          _id: messageId,
+          group: groupId,
+          type: "group",
+        });
+        if (!message) continue;
+
+        const statusIndex = message.messageStatus.findIndex(
+          (s) => s.user.toString() === currentUserId,
+        );
+        if (
+          statusIndex === -1 ||
+          message.messageStatus[statusIndex].status === "read"
+        ) {
+          continue; // Not applicable or already read
+        }
+
+        // Update to read
+        const now = new Date();
+        message.messageStatus[statusIndex].status = "read";
+        message.messageStatus[statusIndex].readAt = now;
+
+        // Add to readBy if not already
+        if (!message.readBy.some((u) => u.toString() === currentUserId)) {
+          message.readBy.push(socket.user._id);
+        }
+
+        await message.save();
+
+        // Compute full status details with user objects
+        const readBy = message.messageStatus
+          .filter((s) => s.status === "read")
+          .map((s) => userMap.get(s.user.toString()));
+        const deliveredTo = message.messageStatus
+          .filter((s) => s.status === "delivered")
+          .map((s) => userMap.get(s.user.toString()));
+        const sentTo = message.messageStatus
+          .filter((s) => s.status === "sent")
+          .map((s) => userMap.get(s.user.toString()));
+
+        // Emit updated status to the group room with full details
+        io.to(`group_${groupId}`).emit("group:status", {
+          groupId,
+          messageId: message._id,
+          updatedBy: currentUserId,
+          updatedAt: now.toISOString(),
+          status: {
+            // Combine all statuses into a single object with full user details
+            ...readBy.reduce(
+              (acc, user) => ({
+                ...acc,
+                [user._id]: {
+                  status: "read",
+                  readAt: now.toISOString(),
+                  user: user, // Include full user object
+                },
+              }),
+              {},
+            ),
+            ...deliveredTo.reduce(
+              (acc, user) => ({
+                ...acc,
+                [user._id]: {
+                  status: "delivered",
+                  deliveredAt: now.toISOString(),
+                  user: user, // Include full user object
+                },
+              }),
+              {},
+            ),
+            ...sentTo.reduce(
+              (acc, user) => ({
+                ...acc,
+                [user._id]: {
+                  status: "sent",
+                  sentAt: now.toISOString(),
+                  user: user, // Include full user object
+                },
+              }),
+              {},
+            ),
+          },
+        });
+      }
+
+      callback?.({ success: true });
+    } catch (error) {
+      console.error("Error processing group read receipts:", error);
+      callback?.({
+        success: false,
+        error: error.message || "Failed to process read receipts",
       });
     }
   });
