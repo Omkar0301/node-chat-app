@@ -1,9 +1,16 @@
 const { socketAuth } = require("../middleware/auth");
 const { connections } = require("./store");
-const { registerDirectHandlers } = require("./handlers/direct");
-const { registerTypingHandlers } = require("./handlers/typing");
-const { registerGroupHandlers } = require("./handlers/group");
-const { setupOnConnect, registerDisconnect } = require("./handlers/lifecycle");
+const {
+  registerDirectHandlers,
+} = require("./handlers/direct/registerDirectHandlers");
+const {
+  registerTypingHandlers,
+} = require("./handlers/typing/registerTypingHandlers");
+const {
+  registerGroupHandlers,
+} = require("./handlers/group/registerGroupHandlers");
+const { setupOnConnect } = require("./handlers/lifecycle/onConnect");
+const { registerDisconnect } = require("./handlers/lifecycle/onDisconnect");
 
 const initializeSocket = (server) => {
   const io = require("socket.io")(server, {
