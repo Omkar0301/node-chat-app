@@ -22,21 +22,21 @@ async function setupOnConnect(io, socket) {
     // Fetch and deliver undelivered DIRECT messages
     const directMessages = await Message.find({
       recipient: userId,
-      status: "sent",
+     status: { $in: ["sent", "delivered"] },
       type: "direct",
-    }).lean();
+    }).lean(); 
     if (directMessages.length > 0) {
       const messageIds = directMessages.map((m) => m._id);
       await Message.updateMany(
         { _id: { $in: messageIds } },
-        { $set: { status: "delivered" } },
+        { $set: { status: "delivered" } }
       );
       directMessages.forEach((message) => {
         message.status = "delivered";
-        io.to(`user_${userIdStr}`).emit("message:receive", message);
+        socket.emit("message:receive", message);
       });
       console.log(
-        `Delivered ${directMessages.length} pending direct messages to user ${userId}`,
+        `Delivered ${directMessages.length} pending direct messages to user ${userId}`
       );
     }
 
@@ -51,7 +51,7 @@ async function setupOnConnect(io, socket) {
       const bulkOps = [];
       for (const gm of groupMessages) {
         const statusIndex = gm.messageStatus.findIndex(
-          (s) => s.user.toString() === userIdStr,
+          (s) => s.user.toString() === userIdStr
         );
         if (statusIndex !== -1) {
           bulkOps.push({
@@ -75,7 +75,7 @@ async function setupOnConnect(io, socket) {
         _id: { $in: groupMessages.map((gm) => gm._id) },
       }).lean();
       for (const ugm of updatedGroupMessages) {
-        io.to(`user_${userIdStr}`).emit("group:receive", ugm);
+        socket.emit("group:receive", ugm);
         const groupId = ugm.group.toString();
         io.to(`group_${groupId}`).emit("group:status", {
           groupId,
@@ -91,7 +91,7 @@ async function setupOnConnect(io, socket) {
         });
       }
       console.log(
-        `Delivered ${groupMessages.length} pending group messages to user ${userId}`,
+        `Delivered ${groupMessages.length} pending group messages to user ${userId}`
       );
     }
   } catch (err) {

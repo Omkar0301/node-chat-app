@@ -35,11 +35,11 @@ const initializeSocket = (server) => {
       connections.set(userIdStr, socket.id);
       socket.userId = userIdStr;
 
-      // Connection setup (status updates, pending deliveries)
-      await setupOnConnect(io, socket);
-
       // Join personal room
       socket.join(`user_${userIdStr}`);
+
+      // Connection setup (status updates, pending deliveries)
+      await setupOnConnect(io, socket);
 
       // Register modular handlers
       registerDirectHandlers(io, socket);
