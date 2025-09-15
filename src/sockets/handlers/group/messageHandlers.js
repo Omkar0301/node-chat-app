@@ -1,5 +1,6 @@
 const Message = require("../../../models/Message");
 const { connections } = require("../../store");
+const { getGroupUnreadCounts } = require("../../../utils/messageUtils");
 const {
   checkGroupMembership,
   getUserMap,
@@ -12,6 +13,45 @@ const mongoose = require("mongoose");
 
 function registerMessageHandlers(io, socket) {
   const userIdStr = socket.user._id.toString();
+  const userId = socket.user._id;
+
+  // Handle sync request for group unread counts
+  socket.on("group:sync", async (callback) => {
+    try {
+      const unreadCounts = await getGroupUnreadCounts(userId);
+
+      // Emit unread counts to the client
+      socket.emit("group:unread-counts", {
+        counts: unreadCounts,
+        type: "group",
+      });
+
+      // Update status to delivered for all unread messages
+      // Update all unread messages to 'delivered' status
+      await Message.updateMany(
+        {
+          type: "group",
+          messageStatus: {
+            $elemMatch: {
+              user: userId,
+              status: { $in: ["sent", "delivered"] },
+            },
+          },
+        },
+        {
+          $set: {
+            "messageStatus.$.status": "delivered",
+            "messageStatus.$.deliveredAt": new Date(),
+          },
+        },
+      );
+
+      callback?.({ success: true });
+    } catch (error) {
+      console.error("Error syncing group messages:", error);
+      callback?.({ success: false, error: error.message });
+    }
+  });
 
   // Group message handler
   socket.on("group:send", async (data, callback) => {

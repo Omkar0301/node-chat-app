@@ -1,5 +1,7 @@
 const Message = require("../../../models/Message");
 const { connections } = require("../../store");
+const { getDirectUnreadCounts } = require("../../../utils/messageUtils");
+
 const {
   checkDirectParticipant,
   validateRecipient,
@@ -75,6 +77,35 @@ function registerMessageHandlers(io, socket) {
       }
     } catch (error) {
       console.error("Error confirming message delivery:", error);
+    }
+  });
+
+  // Handle sync request from client to get unread message counts
+  socket.on("messages:sync", async (callback) => {
+    try {
+      const userId = socket.user._id;
+      const unreadCounts = await getDirectUnreadCounts(userId);
+
+      // Emit unread counts to the client
+      socket.emit("messages:unread-counts", {
+        counts: unreadCounts,
+        type: "direct",
+      });
+
+      // Update status to delivered for all unread messages
+      await Message.updateMany(
+        {
+          recipient: userId,
+          status: { $in: ["sent", "delivered"] },
+          type: "direct",
+        },
+        { $set: { status: "delivered" } },
+      );
+
+      callback?.({ success: true });
+    } catch (error) {
+      console.error("Error syncing messages:", error);
+      callback?.({ success: false, error: error.message });
     }
   });
 
