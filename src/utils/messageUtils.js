@@ -13,6 +13,16 @@ async function getDirectUnreadCounts(userId) {
         recipient: userId,
         status: { $in: ["sent", "delivered"] },
         type: "direct",
+        // Exclude messages that are deleted for everyone or deleted for this user
+        $and: [
+          { isDeleted: { $ne: true } },
+          {
+            $or: [
+              { deletedFor: { $exists: false } },
+              { deletedFor: { $ne: userId } },
+            ],
+          },
+        ],
       },
     },
     {
@@ -42,6 +52,16 @@ async function getGroupUnreadCounts(userId) {
     {
       $match: {
         type: "group",
+        // Exclude messages that are deleted for everyone or deleted for this user
+        $and: [
+          { isDeleted: { $ne: true } },
+          {
+            $or: [
+              { deletedFor: { $exists: false } },
+              { deletedFor: { $ne: userId } },
+            ],
+          },
+        ],
         messageStatus: {
           $elemMatch: {
             user: userId,

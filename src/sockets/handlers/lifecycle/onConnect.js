@@ -34,7 +34,7 @@ async function setupOnConnect(io, socket) {
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } }
+        { $set: { status: "delivered" } },
       ),
       Message.updateMany(
         {
@@ -47,7 +47,7 @@ async function setupOnConnect(io, socket) {
             "messageStatus.$[elem].deliveredAt": new Date(),
           },
         },
-        { arrayFilters: [{ "elem.user": userId, "elem.status": "sent" }] }
+        { arrayFilters: [{ "elem.user": userId, "elem.status": "sent" }] },
       ),
     ]);
   } catch (err) {}

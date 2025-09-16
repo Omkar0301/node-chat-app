@@ -273,8 +273,10 @@ function registerMessageHandlers(io, socket) {
       if (!message) {
         throw new Error("Message not found");
       }
+
+      const isSender = message.sender.toString() === userIdStr;
+
       if (forEveryone) {
-        const isSender = message.sender.toString() === userIdStr;
         if (!(isSender || isAdmin || isCreator)) {
           throw new Error("Only sender or admin can delete for everyone");
         }
@@ -282,8 +284,16 @@ function registerMessageHandlers(io, socket) {
           message.isDeleted = true;
           message.deletedAt = new Date();
           message.deletedBy = socket.user._id;
+          // Mark as read for all users when deleted
+          message.messageStatus = message.messageStatus.map((status) => ({
+            ...status,
+            status: "read",
+            readAt: status.status !== "read" ? new Date() : status.readAt,
+          }));
           await message.save();
         }
+
+        // Notify all group members
         io.to(`group_${groupId}`).emit("group:messageDeleted", {
           groupId,
           messageId: message._id,
@@ -292,19 +302,63 @@ function registerMessageHandlers(io, socket) {
           deletedAt: message.deletedAt.toISOString(),
         });
       } else {
+        // Delete for me only
         const alreadyHidden = (message.deletedFor || []).some(
           (u) => u.toString() === userIdStr,
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
+          // Update message status to read for this user
+          message.messageStatus = message.messageStatus.map((status) => {
+            if (
+              status.user.toString() === userIdStr &&
+              status.status !== "read"
+            ) {
+              return {
+                ...status,
+                status: "read",
+                readAt: new Date(),
+              };
+            }
+            return status;
+          });
           await message.save();
         }
+
+        // Notify only the current user
         io.to(`user_${userIdStr}`).emit("group:messageHidden", {
           groupId,
           messageId: message._id,
           forEveryone: false,
         });
       }
+
+      // Update unread counts for all group members
+      const updateCountsForGroup = async () => {
+        const memberIds = group.members.map((member) => member.toString());
+
+        // Get updated unread counts for all members
+        const memberCounts = await Promise.all(
+          memberIds.map(async (memberId) => {
+            const counts = await getGroupUnreadCounts(memberId);
+            return { memberId, counts };
+          }),
+        );
+
+        // Emit updated counts to online members
+        memberCounts.forEach(({ memberId, counts }) => {
+          const socketId = connections.get(memberId);
+          if (socketId && io.sockets.sockets.has(socketId)) {
+            io.to(socketId).emit("group:unread-counts", {
+              counts,
+              type: "group",
+            });
+          }
+        });
+      };
+
+      await updateCountsForGroup();
+
       callback?.({ success: true });
     } catch (error) {
       console.error("Error deleting group message:", error);

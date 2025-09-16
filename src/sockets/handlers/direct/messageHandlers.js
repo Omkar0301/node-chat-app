@@ -145,6 +145,10 @@ function registerMessageHandlers(io, socket) {
         socket.user._id,
       );
       const currentUserId = socket.user._id.toString();
+      const otherId = isSender
+        ? message.recipient?.toString()
+        : message.sender.toString();
+
       if (forEveryone) {
         if (!isSender) {
           throw new Error("Only sender can delete for everyone");
@@ -153,17 +157,22 @@ function registerMessageHandlers(io, socket) {
           message.isDeleted = true;
           message.deletedAt = new Date();
           message.deletedBy = socket.user._id;
+          // Mark as read for both users when deleted
+          if (message.status !== "read") {
+            message.status = "read";
+          }
           await message.save();
         }
-        const otherId = isSender
-          ? message.recipient?.toString()
-          : message.sender.toString();
+
+        // Notify sender
         io.to(`user_${currentUserId}`).emit("message:deleted", {
           messageId: message._id,
           forEveryone: true,
           deletedBy: currentUserId,
           deletedAt: message.deletedAt.toISOString(),
         });
+
+        // Notify recipient if online
         if (otherId) {
           const otherSocketId = connections.get(otherId);
           if (otherSocketId && io.sockets.sockets.has(otherSocketId)) {
@@ -176,11 +185,19 @@ function registerMessageHandlers(io, socket) {
           }
         }
       } else {
+        // Delete for me only
         const alreadyHidden = (message.deletedFor || []).some(
           (u) => u.toString() === currentUserId,
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
+          // If this was an unread message, mark it as read
+          if (
+            message.recipient?.toString() === currentUserId &&
+            message.status !== "read"
+          ) {
+            message.status = "read";
+          }
           await message.save();
         }
         io.to(`user_${currentUserId}`).emit("message:hidden", {
@@ -188,6 +205,25 @@ function registerMessageHandlers(io, socket) {
           forEveryone: false,
         });
       }
+
+      // Update unread counts for both users
+      const updateCountsForUser = async (userId) => {
+        const counts = await getDirectUnreadCounts(userId);
+        const socketId = connections.get(userId);
+        if (socketId && io.sockets.sockets.has(socketId)) {
+          io.to(socketId).emit("messages:unread-counts", {
+            counts,
+            type: "direct",
+          });
+        }
+      };
+
+      // Update counts for both sender and recipient
+      await Promise.all([
+        updateCountsForUser(currentUserId),
+        otherId ? updateCountsForUser(otherId) : Promise.resolve(),
+      ]);
+
       callback?.({ success: true });
     } catch (error) {
       console.error("Error deleting direct message:", error);
