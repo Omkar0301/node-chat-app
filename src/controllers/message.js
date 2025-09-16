@@ -24,6 +24,7 @@ const getConversation = async (req, res) => {
             ],
           },
           { deletedFor: { $ne: currentUser } },
+          { isDeleted: { $ne: true } },
         ],
       })
         .sort({ createdAt: -1 })
@@ -40,6 +41,7 @@ const getConversation = async (req, res) => {
             ],
           },
           { deletedFor: { $ne: currentUser } },
+          { isDeleted: { $ne: true } },
         ],
       }),
     ]);
@@ -86,6 +88,7 @@ const getGroupConversation = async (req, res) => {
           { group: groupId },
           { type: "group" },
           { deletedFor: { $ne: req.user.userId } },
+          { isDeleted: { $ne: true } },
         ],
       })
         .sort({ createdAt: -1 })
@@ -98,6 +101,7 @@ const getGroupConversation = async (req, res) => {
           { group: groupId },
           { type: "group" },
           { deletedFor: { $ne: req.user.userId } },
+          { isDeleted: { $ne: true } },
         ],
       }),
     ]);
@@ -137,7 +141,13 @@ const getConversations = async (req, res) => {
     const userMessages = await Message.aggregate([
       {
         $match: {
-          $or: [{ sender: currentUser }, { recipient: currentUser }],
+          $and: [
+            {
+              $or: [{ sender: currentUser }, { recipient: currentUser }],
+            },
+            { deletedFor: { $ne: currentUser } },
+            { isDeleted: { $ne: true } },
+          ],
         },
       },
       {
@@ -198,7 +208,13 @@ const getConversations = async (req, res) => {
     ]);
 
     const total = await Message.distinct("recipient", {
-      $or: [{ sender: currentUser }, { recipient: currentUser }],
+      $and: [
+        {
+          $or: [{ sender: currentUser }, { recipient: currentUser }],
+        },
+        { deletedFor: { $ne: currentUser } },
+        { isDeleted: { $ne: true } },
+      ],
     }).countDocuments();
 
     const totalPages = Math.ceil(total / limit);
@@ -242,6 +258,8 @@ const markMessagesAsRead = async (req, res) => {
         _id: { $in: messageIds },
         recipient: currentUser,
         status: { $ne: "read" },
+        deletedFor: { $ne: currentUser },
+        isDeleted: { $ne: true },
       },
       { $set: { status: "read", readAt: new Date() } },
     );
