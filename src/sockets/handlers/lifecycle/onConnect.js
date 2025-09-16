@@ -8,61 +8,49 @@ async function setupOnConnect(io, socket) {
   const userId = socket.user._id;
 
   try {
-    // Update user status
     await User.findByIdAndUpdate(userId, {
       online: true,
       socketId: socket.id,
-      lastSeen: null, // Reset lastSeen when online
+      lastSeen: null,
     });
+
     socket.broadcast.emit("user:status", {
       userId,
       online: true,
     });
 
-    // Notify the user about their connection status
     socket.emit("connection:established", {
       message: "Successfully connected to the server",
       userId: userId,
     });
 
-    // Trigger sync for both direct and group messages
-    try {
-      // Emit sync events for both direct and group messages
-      socket.emit("messages:sync");
-      socket.emit("group:sync");
-      console.log("Triggered sync for both direct and group messages");
-    } catch (error) {
-      console.error("Error triggering message sync:", error);
-    }
+    socket.emit("messages:sync");
+    socket.emit("group:sync");
 
-    // Update status of any undelivered messages to delivered
-    // This ensures we don't miss any messages that were sent while the user was offline
     await Promise.all([
-      // Update direct messages
       Message.updateMany(
         {
           recipient: userId,
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } },
+        { $set: { status: "delivered" } }
       ),
-
-      // Update group messages
       Message.updateMany(
         {
           type: "group",
-          "messageStatus.user": userId,
-          "messageStatus.status": "sent",
+          messageStatus: { $elemMatch: { user: userId, status: "sent" } },
         },
-        { $set: { "messageStatus.$.status": "delivered" } },
+        {
+          $set: {
+            "messageStatus.$[elem].status": "delivered",
+            "messageStatus.$[elem].deliveredAt": new Date(),
+          },
+        },
+        { arrayFilters: [{ "elem.user": userId, "elem.status": "sent" }] }
       ),
     ]);
-
-    console.log(`Updated message status for user ${userId} on connect`);
-  } catch (err) {
-    console.error("Error in connection handler:", err);
-  }
+  } catch (err) {}
 }
 
 module.exports = { setupOnConnect };
