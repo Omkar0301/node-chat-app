@@ -83,7 +83,7 @@ const messageSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  },
+  }
 );
 
 // Create text index for search functionality

@@ -11,7 +11,7 @@ const getConversation = async (req, res) => {
     const { userId } = req.params;
     const currentUser = req.user.userId;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
     const [messages, total] = await Promise.all([
@@ -79,7 +79,7 @@ const getGroupConversation = async (req, res) => {
 
     const { groupId } = req.params;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
     const [messages, total] = await Promise.all([
@@ -137,14 +137,11 @@ const getConversations = async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
-    // Get distinct user IDs that the current user has messaged with
     const userMessages = await Message.aggregate([
       {
         $match: {
           $and: [
-            {
-              $or: [{ sender: currentUser }, { recipient: currentUser }],
-            },
+            { $or: [{ sender: currentUser }, { recipient: currentUser }] },
             { deletedFor: { $ne: currentUser } },
             { isDeleted: { $ne: true } },
           ],
@@ -158,9 +155,7 @@ const getConversations = async (req, res) => {
           message: "$$ROOT",
         },
       },
-      {
-        $sort: { "message.createdAt": -1 },
-      },
+      { $sort: { "message.createdAt": -1 } },
       {
         $group: {
           _id: "$otherUser",
@@ -209,9 +204,7 @@ const getConversations = async (req, res) => {
 
     const total = await Message.distinct("recipient", {
       $and: [
-        {
-          $or: [{ sender: currentUser }, { recipient: currentUser }],
-        },
+        { $or: [{ sender: currentUser }, { recipient: currentUser }] },
         { deletedFor: { $ne: currentUser } },
         { isDeleted: { $ne: true } },
       ],
@@ -261,7 +254,7 @@ const markMessagesAsRead = async (req, res) => {
         deletedFor: { $ne: currentUser },
         isDeleted: { $ne: true },
       },
-      { $set: { status: "read", readAt: new Date() } },
+      { $set: { status: "read", readAt: new Date() } }
     );
 
     res.json({
@@ -293,7 +286,7 @@ const searchMessages = async (req, res) => {
       });
     }
 
-    // Build search query based on message type (direct or group)
+    // Development branch code
     let searchQuery = {
       $and: [
         { $text: { $search: query } },
