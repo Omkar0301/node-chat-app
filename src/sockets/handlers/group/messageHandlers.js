@@ -231,10 +231,6 @@ function registerMessageHandlers(io, socket) {
             status[userId].sentAt = s.sentAt.toISOString();
           }
         });
-        console.log(
-          `Emitting group:status for message ${message._id} to group_${groupId}`,
-          status,
-        );
         io.to(`group_${groupId}`).emit("group:status", {
           groupId,
           messageId: message._id,
@@ -260,31 +256,34 @@ function registerMessageHandlers(io, socket) {
       if (!groupId || !messageId) {
         throw new Error("groupId and messageId required");
       }
+      // Get group, isAdmin, isCreator
       const { group, isAdmin, isCreator } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false,
       );
       const message = await Message.findOne({
         _id: messageId,
         group: groupId,
         type: "group",
       });
-      if (!message) {
-        throw new Error("Message not found");
-      }
 
+      if (!message) throw new Error("Message not found");
+
+      const userIdStr = socket.user._id.toString();
       const isSender = message.sender.toString() === userIdStr;
 
       if (forEveryone) {
+        // Only sender or admin/creator can delete for everyone
         if (!(isSender || isAdmin || isCreator)) {
-          throw new Error("Only sender or admin can delete for everyone");
+          throw new Error(
+            "Only sender or admin/creator can delete for everyone",
+          );
         }
         if (!message.isDeleted) {
           message.isDeleted = true;
           message.deletedAt = new Date();
           message.deletedBy = socket.user._id;
-          // Mark as read for all users when deleted
+          // Optional: mark all as read to prevent wrong unread counts
           message.messageStatus = message.messageStatus.map((status) => ({
             ...status,
             status: "read",
@@ -334,30 +333,23 @@ function registerMessageHandlers(io, socket) {
       }
 
       // Update unread counts for all group members
-      const updateCountsForGroup = async () => {
-        const memberIds = group.members.map((member) => member.toString());
+      const memberIds = group.members.map((m) => m.toString());
+      const memberCounts = await Promise.all(
+        memberIds.map(async (memberId) => {
+          const counts = await getGroupUnreadCounts(memberId);
+          return { memberId, counts };
+        }),
+      );
 
-        // Get updated unread counts for all members
-        const memberCounts = await Promise.all(
-          memberIds.map(async (memberId) => {
-            const counts = await getGroupUnreadCounts(memberId);
-            return { memberId, counts };
-          }),
-        );
-
-        // Emit updated counts to online members
-        memberCounts.forEach(({ memberId, counts }) => {
-          const socketId = connections.get(memberId);
-          if (socketId && io.sockets.sockets.has(socketId)) {
-            io.to(socketId).emit("group:unread-counts", {
-              counts,
-              type: "group",
-            });
-          }
-        });
-      };
-
-      await updateCountsForGroup();
+      memberCounts.forEach(({ memberId, counts }) => {
+        const socketId = connections.get(memberId);
+        if (socketId && io.sockets.sockets.has(socketId)) {
+          io.to(socketId).emit("group:unread-counts", {
+            counts,
+            type: "group",
+          });
+        }
+      });
 
       callback?.({ success: true });
     } catch (error) {

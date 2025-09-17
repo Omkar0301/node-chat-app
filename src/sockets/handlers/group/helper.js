@@ -1,48 +1,43 @@
 const mongoose = require("mongoose");
-const { UnauthorizedError } = require("../../../utils/errors");
 const Group = require("../../../models/Group");
 const User = require("../../../models/User");
 const Message = require("../../../models/Message");
-
-function isValidObjectId(id) {
-  return mongoose.Types.ObjectId.isValid(id);
-}
+const { UnauthorizedError } = require("../../../utils/errors");
 
 async function checkGroupMembership(groupId, userId, requireAdmin = false) {
   if (!isValidObjectId(groupId) || !isValidObjectId(userId)) {
     throw new Error("Invalid ID");
   }
   const group = await Group.findById(groupId);
-  if (!group) {
-    throw new Error("Group not found");
-  }
+  if (!group) throw new Error("Group not found");
   const userIdStr = userId.toString();
   const isMember = group.members.some((m) => m.toString() === userIdStr);
-  if (!isMember) {
+  if (!isMember)
     throw new UnauthorizedError("You are not a member of this group");
-  }
-  let isAdmin = false;
-  let isCreator = false;
-  if (requireAdmin) {
-    isCreator = group.createdBy.toString() === userIdStr;
-    isAdmin = group.admins.some((a) => a.toString() === userIdStr) || isCreator;
-    if (!isAdmin) {
-      throw new UnauthorizedError(
-        "Only admins or creator can perform this action",
-      );
-    }
+
+  const isCreator = group.createdBy.toString() === userIdStr;
+  const isAdmin =
+    group.admins.some((a) => a.toString() === userIdStr) || isCreator;
+
+  if (requireAdmin && !isAdmin) {
+    throw new UnauthorizedError(
+      "Only admins or creator can perform this action"
+    );
   }
   return { group, isAdmin, isCreator };
+}
+
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
 }
 
 async function getUserMap(userIds) {
   const users = await User.find(
     { _id: { $in: userIds } },
-    { username: 1, email: 1, profilePicture: 1, online: 1, lastSeen: 1 },
+    { username: 1, email: 1, profilePicture: 1, online: 1, lastSeen: 1 }
   );
   return new Map(users.map((u) => [u._id.toString(), u.getPublicProfile()]));
 }
-
 async function validateReplyTo(replyTo, groupId) {
   if (replyTo) {
     if (!isValidObjectId(replyTo)) {
@@ -53,9 +48,7 @@ async function validateReplyTo(replyTo, groupId) {
       group: groupId,
       type: "group",
     });
-    if (!exists) {
-      throw new Error("ReplyTo message not found");
-    }
+    if (!exists) throw new Error("ReplyTo message not found");
   }
 }
 
@@ -68,10 +61,26 @@ function validateAttachments(attachments) {
   }
 }
 
+async function getGroupUnreadCounts(userId) {
+  const counts = await Message.countDocuments({
+    type: "group",
+    isDeleted: { $ne: true },
+    deletedFor: { $nin: [userId] },
+    messageStatus: {
+      $elemMatch: {
+        user: userId,
+        status: { $ne: "read" },
+      },
+    },
+  });
+  return counts;
+}
+
 module.exports = {
-  isValidObjectId,
   checkGroupMembership,
+  isValidObjectId,
   getUserMap,
   validateReplyTo,
   validateAttachments,
+  getGroupUnreadCounts,
 };
