@@ -11,14 +11,20 @@ const getConversation = async (req, res) => {
     const { userId } = req.params;
     const currentUser = req.user.userId;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
     const [messages, total] = await Promise.all([
       Message.find({
-        $or: [
-          { sender: currentUser, recipient: userId },
-          { sender: userId, recipient: currentUser },
+        $and: [
+          {
+            $or: [
+              { sender: currentUser, recipient: userId },
+              { sender: userId, recipient: currentUser },
+            ],
+          },
+          { deletedFor: { $ne: currentUser } },
+          { isDeleted: { $ne: true } },
         ],
       })
         .sort({ createdAt: -1 })
@@ -27,9 +33,15 @@ const getConversation = async (req, res) => {
         .populate("sender", "name email")
         .populate("recipient", "name email"),
       Message.countDocuments({
-        $or: [
-          { sender: currentUser, recipient: userId },
-          { sender: userId, recipient: currentUser },
+        $and: [
+          {
+            $or: [
+              { sender: currentUser, recipient: userId },
+              { sender: userId, recipient: currentUser },
+            ],
+          },
+          { deletedFor: { $ne: currentUser } },
+          { isDeleted: { $ne: true } },
         ],
       }),
     ]);
@@ -67,13 +79,17 @@ const getGroupConversation = async (req, res) => {
 
     const { groupId } = req.params;
     const page = parseInt(req.query.page, 10) || 1;
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); // Max 50 messages per page
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
     const [messages, total] = await Promise.all([
       Message.find({
-        group: groupId,
-        type: "group",
+        $and: [
+          { group: groupId },
+          { type: "group" },
+          { deletedFor: { $ne: req.user.userId } },
+          { isDeleted: { $ne: true } },
+        ],
       })
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -81,8 +97,12 @@ const getGroupConversation = async (req, res) => {
         .populate("sender", "name email")
         .populate("group", "name"),
       Message.countDocuments({
-        group: groupId,
-        type: "group",
+        $and: [
+          { group: groupId },
+          { type: "group" },
+          { deletedFor: { $ne: req.user.userId } },
+          { isDeleted: { $ne: true } },
+        ],
       }),
     ]);
 
@@ -117,11 +137,14 @@ const getConversations = async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
     const skip = (page - 1) * limit;
 
-    // Get distinct user IDs that the current user has messaged with
     const userMessages = await Message.aggregate([
       {
         $match: {
-          $or: [{ sender: currentUser }, { recipient: currentUser }],
+          $and: [
+            { $or: [{ sender: currentUser }, { recipient: currentUser }] },
+            { deletedFor: { $ne: currentUser } },
+            { isDeleted: { $ne: true } },
+          ],
         },
       },
       {
@@ -132,9 +155,7 @@ const getConversations = async (req, res) => {
           message: "$$ROOT",
         },
       },
-      {
-        $sort: { "message.createdAt": -1 },
-      },
+      { $sort: { "message.createdAt": -1 } },
       {
         $group: {
           _id: "$otherUser",
@@ -182,7 +203,11 @@ const getConversations = async (req, res) => {
     ]);
 
     const total = await Message.distinct("recipient", {
-      $or: [{ sender: currentUser }, { recipient: currentUser }],
+      $and: [
+        { $or: [{ sender: currentUser }, { recipient: currentUser }] },
+        { deletedFor: { $ne: currentUser } },
+        { isDeleted: { $ne: true } },
+      ],
     }).countDocuments();
 
     const totalPages = Math.ceil(total / limit);
@@ -226,6 +251,8 @@ const markMessagesAsRead = async (req, res) => {
         _id: { $in: messageIds },
         recipient: currentUser,
         status: { $ne: "read" },
+        deletedFor: { $ne: currentUser },
+        isDeleted: { $ne: true },
       },
       { $set: { status: "read", readAt: new Date() } }
     );
@@ -259,9 +286,13 @@ const searchMessages = async (req, res) => {
       });
     }
 
-    // Build search query based on message type (direct or group)
+    // Development branch code
     let searchQuery = {
-      $text: { $search: query },
+      $and: [
+        { $text: { $search: query } },
+        { deletedFor: { $ne: currentUser } },
+        { isDeleted: { $ne: true } },
+      ],
     };
 
     if (type === "direct") {
@@ -271,14 +302,12 @@ const searchMessages = async (req, res) => {
           message: "User ID is required for direct messages",
         });
       }
-      searchQuery.$and = [
-        {
-          $or: [
-            { sender: currentUser, recipient: userId },
-            { sender: userId, recipient: currentUser },
-          ],
-        },
-      ];
+      searchQuery.$and.push({
+        $or: [
+          { sender: currentUser, recipient: userId },
+          { sender: userId, recipient: currentUser },
+        ],
+      });
     } else if (type === "group") {
       if (!groupId) {
         return res.status(400).json({
@@ -286,14 +315,16 @@ const searchMessages = async (req, res) => {
           message: "Group ID is required for group messages",
         });
       }
-      searchQuery.group = groupId;
+      searchQuery.$and.push({ group: groupId });
     } else {
       // Search across all user's conversations
-      searchQuery.$or = [
-        { sender: currentUser },
-        { recipient: currentUser },
-        { "messageStatus.user": currentUser },
-      ];
+      searchQuery.$and.push({
+        $or: [
+          { sender: currentUser },
+          { recipient: currentUser },
+          { "messageStatus.user": currentUser },
+        ],
+      });
     }
 
     const [messages, total] = await Promise.all([
