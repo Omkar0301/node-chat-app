@@ -32,6 +32,7 @@ const initializeSocket = (server) => {
       console.log("User connected:", userIdStr);
 
       // Add user to active connections
+      const previouslyConnected = connections.has(userIdStr);
       connections.set(userIdStr, socket.id);
       socket.userId = userIdStr;
 
@@ -39,7 +40,7 @@ const initializeSocket = (server) => {
       socket.join(`user_${userIdStr}`);
 
       // Connection setup (status updates, pending deliveries)
-      await setupOnConnect(io, socket);
+      await setupOnConnect(io, socket, previouslyConnected);
 
       // Register modular handlers
       registerDirectHandlers(io, socket);

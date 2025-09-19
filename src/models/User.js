@@ -37,10 +37,6 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
-    socketId: {
-      type: String,
-      default: null,
-    },
     refreshToken: {
       type: String,
       select: false,
@@ -56,7 +52,7 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  },
+  }
 );
 
 // Hash password before saving

@@ -28,12 +28,16 @@ function registerGroupManagementHandlers(io, socket) {
       await group.save();
       await User.updateMany(
         { _id: { $in: membersArray } },
-        { $addToSet: { groups: group._id } },
+        { $addToSet: { groups: group._id } }
       );
       membersArray.forEach((memberId) => {
-        const memberSocketId = connections.get(memberId.toString());
-        if (memberSocketId && io.sockets.sockets.has(memberSocketId)) {
-          io.to(memberSocketId).socketsJoin(`group_${group._id}`);
+        const memberSocketIds = connections.get(memberId.toString());
+        if (memberSocketIds) {
+          memberSocketIds.forEach((socketId) => {
+            if (io.sockets.sockets.has(socketId)) {
+              io.to(socketId).socketsJoin(`group_${group._id}`);
+            }
+          });
         }
       });
       io.to(`group_${group._id}`).emit("group:created", group);
@@ -55,7 +59,7 @@ function registerGroupManagementHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false,
+        false
       ); // Not Require admin
       if (group.name === trimmed) {
         callback?.({ success: true, data: group });
@@ -86,12 +90,16 @@ function registerGroupManagementHandlers(io, socket) {
       await Group.deleteOne({ _id: groupId });
       await User.updateMany(
         { _id: { $in: group.members } },
-        { $pull: { groups: groupId } },
+        { $pull: { groups: groupId } }
       );
       group.members.forEach((memberId) => {
-        const memberSocketId = connections.get(memberId.toString());
-        if (memberSocketId && io.sockets.sockets.has(memberSocketId)) {
-          io.to(memberSocketId).emit("group:deleted", { groupId: group._id });
+        const memberSocketIds = connections.get(memberId.toString());
+        if (memberSocketIds) {
+          memberSocketIds.forEach((socketId) => {
+            if (io.sockets.sockets.has(socketId)) {
+              io.to(socketId).emit("group:deleted", { groupId: group._id });
+            }
+          });
         }
       });
       io.in(`group_${group._id}`).socketsLeave(`group_${group._id}`);

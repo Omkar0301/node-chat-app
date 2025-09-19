@@ -35,13 +35,14 @@ function registerMessageHandlers(io, socket) {
         replyTo: replyTo || null,
       });
       await message.save();
-      const recipientSocketId = connections.get(to.toString());
+      const recipientRoom = `user_${to.toString()}`;
+      const isRecipientOnline = connections.has(to.toString());
       let updatedMessage = message;
-      if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
+      if (isRecipientOnline) {
         message.status = "delivered";
         await message.save();
-        updatedMessage = await Message.findById(message._id); // Refresh
-        io.to(recipientSocketId).emit("message:receive", updatedMessage);
+        updatedMessage = await Message.findById(message._id);
+        io.to(recipientRoom).emit("message:receive", updatedMessage);
       }
       io.to(`user_${userIdStr}`).emit("message:sent", updatedMessage);
       callback?.({ success: true, data: updatedMessage });
@@ -59,27 +60,42 @@ function registerMessageHandlers(io, socket) {
     try {
       const { messageId } = data || {};
       if (!messageId) return;
+
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
+
       if (message.status !== "delivered") {
         message.status = "delivered";
         await message.save();
       }
-      const senderSocketId = connections.get(message.sender.toString());
-      if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
-        io.to(senderSocketId).emit("message:status", {
-          messageId: message._id,
-          status: "delivered",
-        });
-      }
+
+      // Populate sender & recipient details
+      const populatedMessage = await Message.findById(message._id)
+        .populate("sender", "_id fullName email")
+        .populate("recipient", "_id fullName email");
+
+      const payload = {
+        messageId: populatedMessage._id,
+        status: "delivered",
+        sender: populatedMessage.sender,
+        recipient: populatedMessage.recipient,
+      };
+
+      io.to(`user_${message.sender.toString()}`).emit(
+        "message:status",
+        payload
+      );
+      io.to(`user_${message.recipient.toString()}`).emit(
+        "message:status",
+        payload
+      );
     } catch (error) {
       console.error("Error confirming message delivery:", error);
     }
   });
-
   // Handle sync request from client to get unread message counts
   socket.on("messages:sync", async (callback) => {
     try {
@@ -99,7 +115,7 @@ function registerMessageHandlers(io, socket) {
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } },
+        { $set: { status: "delivered" } }
       );
 
       callback?.({ success: true });
@@ -114,22 +130,39 @@ function registerMessageHandlers(io, socket) {
     try {
       const { messageId } = data || {};
       if (!messageId) return;
+
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
+
       if (message.status !== "read") {
         message.status = "read";
+        message.readAt = new Date(); // track read time
         await message.save();
       }
-      const senderSocketId = connections.get(message.sender.toString());
-      if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
-        io.to(senderSocketId).emit("message:status", {
-          messageId: message._id,
-          status: "read",
-        });
-      }
+
+      const populatedMessage = await Message.findById(message._id)
+        .populate("sender", "_id fullName email")
+        .populate("recipient", "_id fullName email");
+
+      const payload = {
+        messageId: populatedMessage._id,
+        status: "read",
+        sender: populatedMessage.sender,
+        recipient: populatedMessage.recipient,
+        readAt: populatedMessage.readAt, 
+      };
+
+      io.to(`user_${message.sender.toString()}`).emit(
+        "message:status",
+        payload
+      );
+      io.to(`user_${message.recipient.toString()}`).emit(
+        "message:status",
+        payload
+      );
     } catch (error) {
       console.error("Error confirming message read:", error);
     }
@@ -142,7 +175,7 @@ function registerMessageHandlers(io, socket) {
       if (!messageId) throw new Error("messageId required");
       const { message, isSender } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       const currentUserId = socket.user._id.toString();
       const otherId = isSender
@@ -173,21 +206,18 @@ function registerMessageHandlers(io, socket) {
         });
 
         // Notify recipient if online
-        if (otherId) {
-          const otherSocketId = connections.get(otherId);
-          if (otherSocketId && io.sockets.sockets.has(otherSocketId)) {
-            io.to(otherSocketId).emit("message:deleted", {
-              messageId: message._id,
-              forEveryone: true,
-              deletedBy: currentUserId,
-              deletedAt: message.deletedAt.toISOString(),
-            });
-          }
+        if (otherId && connections.has(otherId)) {
+          io.to(`user_${otherId}`).emit("message:deleted", {
+            messageId: message._id,
+            forEveryone: true,
+            deletedBy: currentUserId,
+            deletedAt: message.deletedAt.toISOString(),
+          });
         }
       } else {
         // Delete for me only
         const alreadyHidden = (message.deletedFor || []).some(
-          (u) => u.toString() === currentUserId,
+          (u) => u.toString() === currentUserId
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
@@ -250,7 +280,7 @@ function registerMessageHandlers(io, socket) {
           type: "direct",
           deletedFor: { $ne: currentUserId },
         },
-        { $addToSet: { deletedFor: currentUserId } },
+        { $addToSet: { deletedFor: currentUserId } }
       );
       io.to(`user_${currentUserId.toString()}`).emit("chat:cleared", {
         withUserId,
