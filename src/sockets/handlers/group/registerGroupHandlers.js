@@ -1,3 +1,4 @@
+// socket/handlers/group/registerGroupHandlers.js
 const {
   registerGroupMembershipHandlers,
 } = require("./groupMembershipHandlers");

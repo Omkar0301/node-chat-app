@@ -3,21 +3,28 @@ const User = require("../../../models/User");
 const { connections } = require("../../store");
 const mongoose = require("mongoose");
 
-async function setupOnConnect(io, socket) {
+async function setupOnConnect(io, socket, previouslyConnected) {
   const userIdStr = socket.user._id.toString();
   const userId = socket.user._id;
 
   try {
-    await User.findByIdAndUpdate(userId, {
-      online: true,
-      socketId: socket.id,
-      lastSeen: null,
-    });
+    // Join all groups
+    const user = await User.findById(userId).select("groups");
+    for (const groupId of user.groups) {
+      socket.join(`group_${groupId.toString()}`);
+    }
 
-    socket.broadcast.emit("user:status", {
-      userId,
-      online: true,
-    });
+    if (!previouslyConnected) {
+      await User.findByIdAndUpdate(userId, {
+        online: true,
+        lastSeen: null,
+      });
+
+      socket.broadcast.emit("user:status", {
+        userId,
+        online: true,
+      });
+    }
 
     socket.emit("connection:established", {
       message: "Successfully connected to the server",
@@ -34,7 +41,7 @@ async function setupOnConnect(io, socket) {
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } },
+        { $set: { status: "delivered" } }
       ),
       Message.updateMany(
         {
@@ -47,7 +54,7 @@ async function setupOnConnect(io, socket) {
             "messageStatus.$[elem].deliveredAt": new Date(),
           },
         },
-        { arrayFilters: [{ "elem.user": userId, "elem.status": "sent" }] },
+        { arrayFilters: [{ "elem.user": userId, "elem.status": "sent" }] }
       ),
     ]);
   } catch (err) {}

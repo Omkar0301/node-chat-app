@@ -1,22 +1,31 @@
 const { connections } = require("../../store");
+const { isValidObjectId } = require("../direct/helpers");
 
 function registerTypingHandlers(io, socket) {
   socket.on("typing:start", ({ to }) => {
-    if (!to) return;
-    const recipientSocketId = connections.get(to.toString());
-    if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-      io.to(recipientSocketId).emit("typing:start", {
-        from: socket.userId,
+    if (!to || !isValidObjectId(to)) return;
+    const recipientSocketIds = connections.get(to.toString());
+    if (recipientSocketIds) {
+      recipientSocketIds.forEach((socketId) => {
+        if (io.sockets.sockets.has(socketId)) {
+          io.to(socketId).emit("typing:start", {
+            from: socket.userId,
+          });
+        }
       });
     }
   });
 
   socket.on("typing:stop", ({ to }) => {
-    if (!to) return;
-    const recipientSocketId = connections.get(to.toString());
-    if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-      io.to(recipientSocketId).emit("typing:stop", {
-        from: socket.userId,
+    if (!to || !isValidObjectId(to)) return;
+    const recipientSocketIds = connections.get(to.toString());
+    if (recipientSocketIds) {
+      recipientSocketIds.forEach((socketId) => {
+        if (io.sockets.sockets.has(socketId)) {
+          io.to(socketId).emit("typing:stop", {
+            from: socket.userId,
+          });
+        }
       });
     }
   });

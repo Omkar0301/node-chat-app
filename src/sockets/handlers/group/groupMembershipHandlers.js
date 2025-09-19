@@ -14,7 +14,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(groupId, socket.user._id);
       await socket.join(`group_${groupId}`);
       console.log(
-        `User ${socket.user._id} successfully joined group_${groupId}`,
+        `User ${socket.user._id} successfully joined group_${groupId}`
       );
       callback?.({
         success: true,
@@ -36,11 +36,11 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group, isCreator } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false,
+        false
       );
       if (isCreator) {
         throw new Error(
-          "Group creator cannot exit the group. Please delete the group or transfer ownership first.",
+          "Group creator cannot exit the group. Please delete the group or transfer ownership first."
         );
       }
       await Group.findByIdAndUpdate(groupId, {
@@ -76,7 +76,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        true,
+        true
       );
       if (!group.members.some((member) => member.toString() === userId)) {
         throw new Error("User is not a member of this group");
@@ -88,10 +88,14 @@ function registerGroupMembershipHandlers(io, socket) {
         $pull: { members: userId, admins: userId },
       });
       await User.findByIdAndUpdate(userId, { $pull: { groups: groupId } });
-      const userSocketId = connections.get(userId.toString());
-      if (userSocketId && io.sockets.sockets.has(userSocketId)) {
-        io.to(userSocketId).emit("group:removed", { groupId });
-        io.sockets.sockets.get(userSocketId)?.leave(`group_${groupId}`);
+      const userSocketIds = connections.get(userId.toString());
+      if (userSocketIds) {
+        userSocketIds.forEach((socketId) => {
+          if (io.sockets.sockets.has(socketId)) {
+            io.to(socketId).emit("group:removed", { groupId });
+            io.sockets.sockets.get(socketId)?.leave(`group_${groupId}`);
+          }
+        });
       }
       io.to(`group_${groupId}`).emit("group:memberRemoved", {
         groupId,
@@ -116,7 +120,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        true,
+        true
       );
       const currentMembers = new Set(group.members.map((m) => m.toString()));
       newMembers.forEach((m) => currentMembers.add(m.toString()));
@@ -125,12 +129,16 @@ function registerGroupMembershipHandlers(io, socket) {
       await group.save();
       await User.updateMany(
         { _id: { $in: newMembers } },
-        { $addToSet: { groups: group._id } },
+        { $addToSet: { groups: group._id } }
       );
       newMembers.forEach((memberId) => {
-        const memberSocketId = connections.get(memberId.toString());
-        if (memberSocketId && io.sockets.sockets.has(memberSocketId)) {
-          io.to(memberSocketId).socketsJoin(`group_${group._id}`);
+        const memberSocketIds = connections.get(memberId.toString());
+        if (memberSocketIds) {
+          memberSocketIds.forEach((socketId) => {
+            if (io.sockets.sockets.has(socketId)) {
+              io.to(socketId).socketsJoin(`group_${group._id}`);
+            }
+          });
         }
       });
       io.to(`group_${group._id}`).emit("group:membersUpdated", group);
