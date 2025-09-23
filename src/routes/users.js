@@ -6,6 +6,9 @@ const { auth } = require("../middleware/auth");
 
 const router = express.Router();
 
+// Get current user profile
+router.get("/profile", auth, userController.getProfile);
+
 // Get all users (except current user)
 router.get("/", auth, userController.getUsers);
 
@@ -20,17 +23,8 @@ router.get(
 // Get user by ID
 router.get("/:id", auth, userController.getUserById);
 
-// Update user profile
-router.put(
-  "/profile",
-  [
-    auth,
-    check("username", "Username is required").optional().not().isEmpty(),
-    check("email", "Please include a valid email").optional().isEmail(),
-  ],
-  validate,
-  userController.updateProfile,
-);
+// Update user profile picture (handled via REST API for file upload)
+router.put("/profile/picture", auth, userController.updateProfilePicture);
 
 // Change password
 router.put(
@@ -48,7 +42,7 @@ router.put(
 );
 
 // Upload profile picture
-router.post("/profile-picture", [auth], userController.uploadProfilePicture);
+router.post("/profile-picture", [auth], userController.updateProfilePicture);
 
 // Delete user account
 router.delete("/", auth, userController.deleteAccount);

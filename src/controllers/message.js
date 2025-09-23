@@ -254,7 +254,7 @@ const markMessagesAsRead = async (req, res) => {
         deletedFor: { $ne: currentUser },
         isDeleted: { $ne: true },
       },
-      { $set: { status: "read", readAt: new Date() } }
+      { $set: { status: "read", readAt: new Date() } },
     );
 
     res.json({

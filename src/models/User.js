@@ -4,6 +4,20 @@ const { v4: uuidv4 } = require("uuid");
 
 const userSchema = new mongoose.Schema(
   {
+    firstName: {
+      type: String,
+      required: [true, "First name is required"],
+      trim: true,
+      minlength: [2, "First name must be at least 2 characters long"],
+      maxlength: [50, "First name cannot be longer than 50 characters"],
+    },
+    lastName: {
+      type: String,
+      required: [true, "Last name is required"],
+      trim: true,
+      minlength: [1, "Last name must be at least 1 character long"],
+      maxlength: [50, "Last name cannot be longer than 50 characters"],
+    },
     username: {
       type: String,
       required: [true, "Username is required"],
@@ -52,7 +66,7 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Hash password before saving

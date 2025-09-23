@@ -6,13 +6,24 @@ const { uploadToCloudinary } = require("../services/cloudinary");
 // Get all users (except current user)
 const getUsers = asyncHandler(async (req, res) => {
   const users = await User.find({ _id: { $ne: req.user.userId } })
-    .select("-password -refreshToken")
+    .select("-password -refreshToken -__v -groups")
     .sort({ online: -1, username: 1 });
+
+  const formattedUsers = users.map((user) => ({
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    profilePicture: user.profilePicture,
+    online: user.online,
+    lastSeen: user.lastSeen,
+  }));
 
   res.json({
     success: true,
-    count: users.length,
-    data: users,
+    count: formattedUsers.length,
+    data: formattedUsers,
   });
 });
 
@@ -27,17 +38,30 @@ const searchUsers = asyncHandler(async (req, res) => {
         $or: [
           { username: { $regex: query, $options: "i" } },
           { email: { $regex: query, $options: "i" } },
+          { firstName: { $regex: query, $options: "i" } },
+          { lastName: { $regex: query, $options: "i" } },
         ],
       },
     ],
   })
-    .select("-password -refreshToken")
+    .select("-password -refreshToken -__v -groups")
     .limit(20);
+
+  const formattedUsers = users.map((user) => ({
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    profilePicture: user.profilePicture,
+    online: user.online,
+    lastSeen: user.lastSeen,
+  }));
 
   res.json({
     success: true,
-    count: users.length,
-    data: users,
+    count: formattedUsers.length,
+    data: formattedUsers,
   });
 });
 
@@ -51,11 +75,13 @@ const getUserById = asyncHandler(async (req, res) => {
       populate: [
         {
           path: "members",
-          select: "username email profilePicture online lastSeen fullName _id",
+          select:
+            "username email profilePicture online lastSeen firstName lastName _id",
         },
         {
           path: "admins",
-          select: "username email profilePicture online lastSeen fullName _id",
+          select:
+            "username email profilePicture online lastSeen firstName lastName _id",
         },
       ],
     });
@@ -63,17 +89,61 @@ const getUserById = asyncHandler(async (req, res) => {
   if (!user) {
     throw new NotFoundError("User not found");
   }
-  const responseUser = user.toObject();
-  responseUser.id = responseUser._id;
-  delete responseUser._id;
 
-  responseUser.groups = responseUser.groups.map((group) => {
-    const g = { ...group };
-    g.id = g._id;
-    delete g._id;
-    delete g.__v;
-    return g;
-  });
+  const responseUser = {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    profilePicture: user.profilePicture,
+    online: user.online,
+    lastSeen: user.lastSeen,
+    groups: user.groups.map((group) => {
+      const g = group.toObject ? group.toObject() : { ...group };
+      g.id = g._id;
+      delete g._id;
+      delete g.__v;
+
+      // Format members
+      if (g.members) {
+        g.members = g.members.map((member) => {
+          const m = member._doc ? member._doc : member;
+          const formattedMember = {
+            id: m._id || m.id,
+            username: m.username,
+            email: m.email,
+            firstName: m.firstName,
+            lastName: m.lastName,
+            profilePicture: m.profilePicture,
+            online: m.online,
+            lastSeen: m.lastSeen,
+          };
+          return formattedMember;
+        });
+      }
+
+      // Format admins
+      if (g.admins) {
+        g.admins = g.admins.map((admin) => {
+          const a = admin._doc ? admin._doc : admin;
+          const formattedAdmin = {
+            id: a._id || a.id,
+            username: a.username,
+            email: a.email,
+            firstName: a.firstName,
+            lastName: a.lastName,
+            profilePicture: a.profilePicture,
+            online: a.online,
+            lastSeen: a.lastSeen,
+          };
+          return formattedAdmin;
+        });
+      }
+
+      return g;
+    }),
+  };
 
   res.json({
     success: true,
@@ -81,29 +151,57 @@ const getUserById = asyncHandler(async (req, res) => {
   });
 });
 
-// Update user profile
-const updateProfile = asyncHandler(async (req, res) => {
-  const updates = {};
-  const { username, email } = req.body;
+// Update user profile picture
+const updateProfilePicture = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new BadRequestError("No file uploaded");
+  }
 
-  if (username) updates.username = username;
-  if (email) {
-    const existingUser = await User.findOne({ email });
-    if (existingUser && existingUser._id.toString() !== req.user.userId) {
-      throw new BadRequestError("Email already in use");
-    }
-    updates.email = email;
+  let profilePictureUrl;
+  try {
+    const result = await uploadToCloudinary(req.file.path);
+    profilePictureUrl = result.secure_url;
+  } catch (error) {
+    console.error("Error uploading profile picture:", error);
+    throw new BadRequestError("Failed to upload profile picture");
   }
 
   const user = await User.findByIdAndUpdate(
     req.user.userId,
-    { $set: updates },
+    { $set: { profilePicture: profilePictureUrl } },
     { new: true, runValidators: true },
-  ).select("-password -refreshToken");
+  )
+    .select("-password -refreshToken -__v")
+    .lean();
+
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  // Format the response
+  const userResponse = {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    profilePicture: user.profilePicture,
+    online: user.online,
+    lastSeen: user.lastSeen,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+
+  // Emit the update to all connected clients
+  const io = req.app.get("io");
+  if (io) {
+    io.emit("user:profilePicUpdated", userResponse);
+  }
 
   res.json({
     success: true,
-    data: user,
+    data: userResponse,
+    message: "Profile picture updated successfully",
   });
 });
 
@@ -164,12 +262,28 @@ const deleteAccount = asyncHandler(async (req, res) => {
   });
 });
 
+// Get current user profile
+const getProfile = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.userId).select(
+    "-password -refreshToken -__v",
+  );
+
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  res.json({
+    success: true,
+    data: user,
+  });
+});
+
 module.exports = {
   getUsers,
   searchUsers,
   getUserById,
-  updateProfile,
+  getProfile,
+  updateProfilePicture,
   changePassword,
-  uploadProfilePicture,
   deleteAccount,
 };

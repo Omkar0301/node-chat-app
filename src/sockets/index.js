@@ -9,6 +9,7 @@ const {
 const {
   registerGroupHandlers,
 } = require("./handlers/group/registerGroupHandlers");
+const { registerUserHandlers } = require("./handlers/user");
 const { setupOnConnect } = require("./handlers/lifecycle/onConnect");
 const { registerDisconnect } = require("./handlers/lifecycle/onDisconnect");
 
@@ -46,6 +47,7 @@ const initializeSocket = (server) => {
       registerDirectHandlers(io, socket);
       registerTypingHandlers(io, socket);
       registerGroupHandlers(io, socket);
+      registerUserHandlers(io, socket);
       registerDisconnect(io, socket);
     } catch (err) {
       console.error("Socket connection setup error", err);

@@ -21,7 +21,7 @@ async function checkGroupMembership(groupId, userId, requireAdmin = false) {
 
   if (requireAdmin && !isAdmin) {
     throw new UnauthorizedError(
-      "Only admins or creator can perform this action"
+      "Only admins or creator can perform this action",
     );
   }
   return { group, isAdmin, isCreator };
@@ -34,7 +34,7 @@ function isValidObjectId(id) {
 async function getUserMap(userIds) {
   const users = await User.find(
     { _id: { $in: userIds } },
-    { username: 1, email: 1, profilePicture: 1, online: 1, lastSeen: 1 }
+    { username: 1, email: 1, profilePicture: 1, online: 1, lastSeen: 1 },
   );
   return new Map(users.map((u) => [u._id.toString(), u.getPublicProfile()]));
 }

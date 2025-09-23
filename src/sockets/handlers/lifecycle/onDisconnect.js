@@ -15,6 +15,8 @@ function registerDisconnect(io, socket) {
         socket.broadcast.emit("user:status", {
           userId: socket.user._id,
           online: false,
+          firstName: socket.user.firstName,
+          lastName: socket.user.lastName,
           lastSeen: now.toISOString(),
         });
       }

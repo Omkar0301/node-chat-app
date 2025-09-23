@@ -42,7 +42,7 @@ function registerMessageHandlers(io, socket) {
             "messageStatus.$.status": "delivered",
             "messageStatus.$.deliveredAt": new Date(),
           },
-        }
+        },
       );
 
       callback?.({ success: true });
@@ -85,7 +85,7 @@ function registerMessageHandlers(io, socket) {
       });
       await message.save();
       const userMap = await getUserMap(
-        memberIds.map((id) => new mongoose.Types.ObjectId(id))
+        memberIds.map((id) => new mongoose.Types.ObjectId(id)),
       );
       const bulkOps = [];
       for (const memberId of memberIds) {
@@ -171,7 +171,7 @@ function registerMessageHandlers(io, socket) {
       if (!socket.rooms.has(`group_${groupId}`)) {
         await socket.join(`group_${groupId}`);
         console.log(
-          `User ${userIdStr} re-joined group_${groupId} for read event`
+          `User ${userIdStr} re-joined group_${groupId} for read event`,
         );
       }
       const userMap = await getUserMap(group.members);
@@ -188,14 +188,14 @@ function registerMessageHandlers(io, socket) {
           continue;
         }
         const statusIndex = message.messageStatus.findIndex(
-          (s) => s.user.toString() === userIdStr
+          (s) => s.user.toString() === userIdStr,
         );
         if (
           statusIndex === -1 ||
           message.messageStatus[statusIndex].status === "read"
         ) {
           console.log(
-            `Message ${messageId} not applicable or already read by ${userIdStr}`
+            `Message ${messageId} not applicable or already read by ${userIdStr}`,
           );
           continue;
         }
@@ -216,7 +216,7 @@ function registerMessageHandlers(io, socket) {
       if (bulkOps.length > 0) {
         const result = await Message.bulkWrite(bulkOps);
         console.log(
-          `Updated ${result.modifiedCount} messages to read for user ${userIdStr} in group ${groupId}`
+          `Updated ${result.modifiedCount} messages to read for user ${userIdStr} in group ${groupId}`,
         );
       }
       const updatedMessages = await Message.find({
@@ -270,7 +270,7 @@ function registerMessageHandlers(io, socket) {
       }
       const { group, isAdmin, isCreator } = await checkGroupMembership(
         groupId,
-        socket.user._id
+        socket.user._id,
       );
       const message = await Message.findOne({
         _id: messageId,
@@ -286,7 +286,7 @@ function registerMessageHandlers(io, socket) {
       if (forEveryone) {
         if (!(isSender || isAdmin || isCreator)) {
           throw new Error(
-            "Only sender or admin/creator can delete for everyone"
+            "Only sender or admin/creator can delete for everyone",
           );
         }
         if (!message.isDeleted) {
@@ -310,7 +310,7 @@ function registerMessageHandlers(io, socket) {
         });
       } else {
         const alreadyHidden = (message.deletedFor || []).some(
-          (u) => u.toString() === userIdStr
+          (u) => u.toString() === userIdStr,
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
@@ -342,7 +342,7 @@ function registerMessageHandlers(io, socket) {
         memberIds.map(async (memberId) => {
           const counts = await getGroupUnreadCounts(memberId);
           return { memberId, counts };
-        })
+        }),
       );
 
       memberCounts.forEach(({ memberId, counts }) => {
@@ -379,7 +379,7 @@ function registerMessageHandlers(io, socket) {
       const { group } = await checkGroupMembership(groupId, socket.user._id);
       const res = await Message.updateMany(
         { group: groupId, type: "group", deletedFor: { $ne: socket.user._id } },
-        { $addToSet: { deletedFor: socket.user._id } }
+        { $addToSet: { deletedFor: socket.user._id } },
       );
       io.to(`user_${userIdStr}`).emit("group:chatCleared", {
         groupId,

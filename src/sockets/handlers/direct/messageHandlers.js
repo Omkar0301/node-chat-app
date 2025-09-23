@@ -63,7 +63,7 @@ function registerMessageHandlers(io, socket) {
 
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id
+        socket.user._id,
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
 
@@ -86,11 +86,11 @@ function registerMessageHandlers(io, socket) {
 
       io.to(`user_${message.sender.toString()}`).emit(
         "message:status",
-        payload
+        payload,
       );
       io.to(`user_${message.recipient.toString()}`).emit(
         "message:status",
-        payload
+        payload,
       );
     } catch (error) {
       console.error("Error confirming message delivery:", error);
@@ -115,7 +115,7 @@ function registerMessageHandlers(io, socket) {
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } }
+        { $set: { status: "delivered" } },
       );
 
       callback?.({ success: true });
@@ -133,7 +133,7 @@ function registerMessageHandlers(io, socket) {
 
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id
+        socket.user._id,
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
 
@@ -152,16 +152,16 @@ function registerMessageHandlers(io, socket) {
         status: "read",
         sender: populatedMessage.sender,
         recipient: populatedMessage.recipient,
-        readAt: populatedMessage.readAt, 
+        readAt: populatedMessage.readAt,
       };
 
       io.to(`user_${message.sender.toString()}`).emit(
         "message:status",
-        payload
+        payload,
       );
       io.to(`user_${message.recipient.toString()}`).emit(
         "message:status",
-        payload
+        payload,
       );
     } catch (error) {
       console.error("Error confirming message read:", error);
@@ -175,7 +175,7 @@ function registerMessageHandlers(io, socket) {
       if (!messageId) throw new Error("messageId required");
       const { message, isSender } = await checkDirectParticipant(
         messageId,
-        socket.user._id
+        socket.user._id,
       );
       const currentUserId = socket.user._id.toString();
       const otherId = isSender
@@ -217,7 +217,7 @@ function registerMessageHandlers(io, socket) {
       } else {
         // Delete for me only
         const alreadyHidden = (message.deletedFor || []).some(
-          (u) => u.toString() === currentUserId
+          (u) => u.toString() === currentUserId,
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
@@ -280,7 +280,7 @@ function registerMessageHandlers(io, socket) {
           type: "direct",
           deletedFor: { $ne: currentUserId },
         },
-        { $addToSet: { deletedFor: currentUserId } }
+        { $addToSet: { deletedFor: currentUserId } },
       );
       io.to(`user_${currentUserId.toString()}`).emit("chat:cleared", {
         withUserId,

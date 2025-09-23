@@ -3,6 +3,7 @@ const User = require("../../../models/User");
 const { connections } = require("../../store");
 const { checkGroupMembership, isValidObjectId } = require("./helper");
 const { UnauthorizedError } = require("../../../utils/errors");
+const { default: mongoose } = require("mongoose");
 
 function registerGroupManagementHandlers(io, socket) {
   // Group creation
@@ -28,7 +29,7 @@ function registerGroupManagementHandlers(io, socket) {
       await group.save();
       await User.updateMany(
         { _id: { $in: membersArray } },
-        { $addToSet: { groups: group._id } }
+        { $addToSet: { groups: group._id } },
       );
       membersArray.forEach((memberId) => {
         const memberSocketIds = connections.get(memberId.toString());
@@ -40,8 +41,47 @@ function registerGroupManagementHandlers(io, socket) {
           });
         }
       });
-      io.to(`group_${group._id}`).emit("group:created", group);
-      callback?.({ success: true, data: group });
+      // Get user details for the response
+      const userDetails = {
+        _id: socket.user._id,
+        username: socket.user.username,
+        email: socket.user.email,
+        profilePicture: socket.user.profilePicture,
+        firstName: socket.user.firstName,
+        lastName: socket.user.lastName,
+        online: true,
+      };
+
+      // Add user details to the group response
+      const groupResponse = group.toObject();
+      groupResponse.members = group.members.map((member) => {
+        // Handle case where member is just an ObjectId
+        if (
+          typeof member === "string" ||
+          member instanceof mongoose.Types.ObjectId
+        ) {
+          return member.toString() === socket.user._id.toString()
+            ? { _id: socket.user._id, ...userDetails }
+            : { _id: member };
+        }
+
+        // Handle case where member is a populated user document
+        if (member._id) {
+          return member._id.toString() === socket.user._id.toString()
+            ? {
+                ...(member.toObject ? member.toObject() : member),
+                ...userDetails,
+              }
+            : member.toObject
+              ? member.toObject()
+              : member;
+        }
+
+        return member;
+      });
+
+      io.to(`group_${group._id}`).emit("group:created", groupResponse);
+      callback?.({ success: true, data: groupResponse });
     } catch (error) {
       console.error("Error creating group:", error);
       callback?.({ success: false, error: "Failed to create group" });
@@ -59,7 +99,7 @@ function registerGroupManagementHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false
+        false,
       ); // Not Require admin
       if (group.name === trimmed) {
         callback?.({ success: true, data: group });
@@ -90,7 +130,7 @@ function registerGroupManagementHandlers(io, socket) {
       await Group.deleteOne({ _id: groupId });
       await User.updateMany(
         { _id: { $in: group.members } },
-        { $pull: { groups: groupId } }
+        { $pull: { groups: groupId } },
       );
       group.members.forEach((memberId) => {
         const memberSocketIds = connections.get(memberId.toString());

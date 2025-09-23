@@ -14,7 +14,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(groupId, socket.user._id);
       await socket.join(`group_${groupId}`);
       console.log(
-        `User ${socket.user._id} successfully joined group_${groupId}`
+        `User ${socket.user._id} successfully joined group_${groupId}`,
       );
       callback?.({
         success: true,
@@ -36,11 +36,11 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group, isCreator } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false
+        false,
       );
       if (isCreator) {
         throw new Error(
-          "Group creator cannot exit the group. Please delete the group or transfer ownership first."
+          "Group creator cannot exit the group. Please delete the group or transfer ownership first.",
         );
       }
       await Group.findByIdAndUpdate(groupId, {
@@ -53,7 +53,11 @@ function registerGroupMembershipHandlers(io, socket) {
       io.to(`group_${groupId}`).emit("group:memberLeft", {
         groupId,
         userId: socket.user._id,
-        userName: socket.user.fullName || socket.user.name,
+        userName:
+          socket.user.fullName ||
+          `${socket.user.firstName} ${socket.user.lastName}`.trim(),
+        firstName: socket.user.firstName,
+        lastName: socket.user.lastName,
         timestamp: new Date().toISOString(),
       });
       socket.emit("group:left", {
@@ -76,7 +80,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        true
+        true,
       );
       if (!group.members.some((member) => member.toString() === userId)) {
         throw new Error("User is not a member of this group");
@@ -97,10 +101,26 @@ function registerGroupMembershipHandlers(io, socket) {
           }
         });
       }
+      // Get the removed user's details
+      const removedUser =
+        await User.findById(userId).select("firstName lastName");
+
       io.to(`group_${groupId}`).emit("group:memberRemoved", {
         groupId,
         removedUserId: userId,
         removedBy: socket.user._id,
+        removedByUser: {
+          id: socket.user._id,
+          firstName: socket.user.firstName,
+          lastName: socket.user.lastName,
+          username: socket.user.username,
+        },
+        removedUser: {
+          id: userId,
+          firstName: removedUser?.firstName,
+          lastName: removedUser?.lastName,
+          username: removedUser?.username,
+        },
       });
       callback?.({ success: true });
     } catch (error) {
@@ -120,7 +140,7 @@ function registerGroupMembershipHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        true
+        true,
       );
       const currentMembers = new Set(group.members.map((m) => m.toString()));
       newMembers.forEach((m) => currentMembers.add(m.toString()));
@@ -129,8 +149,23 @@ function registerGroupMembershipHandlers(io, socket) {
       await group.save();
       await User.updateMany(
         { _id: { $in: newMembers } },
-        { $addToSet: { groups: group._id } }
+        { $addToSet: { groups: group._id } },
       );
+      // Get the details of the user who added the members
+      const addedByUser = {
+        id: socket.user._id,
+        username: socket.user.username,
+        firstName: socket.user.firstName,
+        lastName: socket.user.lastName,
+        profilePicture: socket.user.profilePicture,
+      };
+
+      // Get details of newly added members
+      const addedMembers = await User.find({ _id: { $in: newMembers } })
+        .select("username firstName lastName profilePicture")
+        .lean();
+
+      // Join new members to the group room
       newMembers.forEach((memberId) => {
         const memberSocketIds = connections.get(memberId.toString());
         if (memberSocketIds) {
@@ -141,8 +176,20 @@ function registerGroupMembershipHandlers(io, socket) {
           });
         }
       });
-      io.to(`group_${group._id}`).emit("group:membersUpdated", group);
-      callback?.({ success: true, data: group });
+
+      // Emit event with detailed user information
+      io.to(`group_${group._id}`).emit("group:membersUpdated", {
+        groupId: group._id,
+        addedBy: addedByUser,
+        addedMembers: addedMembers.map((member) => ({
+          id: member._id,
+          username: member.username,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          profilePicture: member.profilePicture,
+        })),
+      });
+      callback?.({ success: true });
     } catch (err) {
       console.error("Error adding members:", err);
       callback?.({ success: false, error: err.message });
