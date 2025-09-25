@@ -15,35 +15,43 @@ const uploadToCloudinary = async (filePath, folder = "chat-app") => {
       throw new Error("File path is required");
     }
 
+    if (!fs.existsSync(filePath)) {
+      throw new Error("File does not exist: " + filePath);
+    }
+
     const result = await cloudinary.uploader.upload(filePath, {
       folder,
       resource_type: "auto",
     });
 
-    // Delete file from local storage
-    fs.unlinkSync(filePath);
-
     return result;
   } catch (error) {
-    // Delete file from local storage if upload fails
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
     throw error;
   }
 };
 
-// Delete file from Cloudinary
-const deleteFromCloudinary = async (publicId) => {
-  try {
-    if (!publicId) {
-      throw new Error("Public ID is required");
-    }
+// Extract public ID from Cloudinary URL
+const extractPublicId = (url) => {
+  if (!url) return null;
+  const matches = url.match(/upload\/(?:v\d+\/)?([^.]*)/);
+  return matches ? matches[1] : null;
+};
 
-    await cloudinary.uploader.destroy(publicId);
-  } catch (error) {
-    console.error("Error deleting file from Cloudinary:", error);
-    throw error;
+// Delete file from Cloudinary
+const deleteFromCloudinary = async (publicIdOrUrl) => {
+  try {
+    if (!publicIdOrUrl) return;
+
+    const publicId = publicIdOrUrl.includes("cloudinary.com")
+      ? extractPublicId(publicIdOrUrl)
+      : publicIdOrUrl;
+
+    if (!publicId) return;
+
+    const result = await cloudinary.uploader.destroy(publicId);
+    return result;
+  } catch {
+    return null;
   }
 };
 

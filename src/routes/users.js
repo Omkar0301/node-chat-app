@@ -2,7 +2,8 @@ const express = require("express");
 const { check } = require("express-validator");
 const userController = require("../controllers/user");
 const { validate } = require("../middleware/validation");
-const { auth } = require("../middleware/auth");
+const { auth } = require("../middleware/auth");// Import upload middleware
+const { uploadFile } = require("../middleware/upload");
 
 const router = express.Router();
 
@@ -24,7 +25,12 @@ router.get(
 router.get("/:id", auth, userController.getUserById);
 
 // Update user profile picture (handled via REST API for file upload)
-router.put("/profile/picture", auth, userController.updateProfilePicture);
+router.put(
+  "/profile/picture",
+  auth,
+  uploadFile("profilePicture"),
+  userController.updateProfilePicture
+);
 
 // Change password
 router.put(
@@ -41,8 +47,6 @@ router.put(
   userController.changePassword,
 );
 
-// Upload profile picture
-router.post("/profile-picture", [auth], userController.updateProfilePicture);
 
 // Delete user account
 router.delete("/", auth, userController.deleteAccount);

@@ -4,6 +4,7 @@ const { connections } = require("../../store");
 const { checkGroupMembership, isValidObjectId } = require("./helper");
 const { UnauthorizedError } = require("../../../utils/errors");
 const { default: mongoose } = require("mongoose");
+const { deleteFromCloudinary } = require("../../../services/cloudinary");
 
 function registerGroupManagementHandlers(io, socket) {
   // Group creation
@@ -29,7 +30,7 @@ function registerGroupManagementHandlers(io, socket) {
       await group.save();
       await User.updateMany(
         { _id: { $in: membersArray } },
-        { $addToSet: { groups: group._id } },
+        { $addToSet: { groups: group._id } }
       );
       membersArray.forEach((memberId) => {
         const memberSocketIds = connections.get(memberId.toString());
@@ -99,7 +100,7 @@ function registerGroupManagementHandlers(io, socket) {
       const { group } = await checkGroupMembership(
         groupId,
         socket.user._id,
-        false,
+        false
       ); // Not Require admin
       if (group.name === trimmed) {
         callback?.({ success: true, data: group });
@@ -127,10 +128,20 @@ function registerGroupManagementHandlers(io, socket) {
       if (group.createdBy.toString() !== socket.user._id.toString()) {
         throw new UnauthorizedError("Not authorized to delete group");
       }
+
+      // Delete group photo if it exists
+      if (group.photo) {
+        try {
+          await deleteFromCloudinary(group.photo);
+        } catch (error) {
+          console.error("Error deleting group photo:", error);
+        }
+      }
+
       await Group.deleteOne({ _id: groupId });
       await User.updateMany(
         { _id: { $in: group.members } },
-        { $pull: { groups: groupId } },
+        { $pull: { groups: groupId } }
       );
       group.members.forEach((memberId) => {
         const memberSocketIds = connections.get(memberId.toString());

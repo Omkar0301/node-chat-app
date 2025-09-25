@@ -1,7 +1,10 @@
 const jwt = require("jsonwebtoken");
 const asyncHandler = require("express-async-handler");
 const User = require("../models/User");
-const { ConflictError, UnauthorizedError } = require("../utils/errors");
+const { ConflictError, UnauthorizedError, BadRequestError } = require("../utils/errors");
+const { uploadToCloudinary } = require("../services/cloudinary");
+const fs = require("fs");
+const path = require("path");
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -20,11 +23,58 @@ const generateRefreshToken = (userId) => {
 // Register a new user
 const register = asyncHandler(async (req, res) => {
   const { username, email, password, firstName, lastName } = req.body;
+  let profilePictureUrl = '';
 
   // Check if user already exists
   const existingUser = await User.findOne({ email });
   if (existingUser) {
+    // If a file was uploaded but user exists, clean it up
+    if (req.file) {
+      try {
+        await fs.promises.unlink(req.file.path);
+      } catch (error) {
+        console.error('Error cleaning up uploaded file:', error);
+      }
+    }
     throw new ConflictError("User already exists with this email");
+  }
+
+  // Handle profile picture upload if file exists
+  if (req.file) {
+    try {
+      const filePath = path.normalize(req.file.path);
+      
+      // Verify file exists before uploading
+      if (!fs.existsSync(filePath)) {
+        throw new BadRequestError("Error processing the uploaded file");
+      }
+
+      // Upload to Cloudinary
+      const result = await uploadToCloudinary(filePath);
+      
+      if (!result?.secure_url) {
+        throw new Error("Failed to upload profile picture");
+      }
+      
+      profilePictureUrl = result.secure_url;
+      
+      // Delete the temporary file after upload
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (error) {
+        console.error('Error deleting temporary file:', error);
+      }
+    } catch (error) {
+      // Clean up the file if there was an error
+      if (req.file?.path) {
+        try {
+          await fs.promises.unlink(req.file.path);
+        } catch (err) {
+          console.error('Error cleaning up file after upload error:', err);
+        }
+      }
+      throw new BadRequestError("Error processing profile picture: " + error.message);
+    }
   }
 
   // Create user
@@ -34,6 +84,7 @@ const register = asyncHandler(async (req, res) => {
     password,
     firstName,
     lastName,
+    profilePicture: profilePictureUrl || '',
   });
 
   await user.save();
@@ -70,6 +121,7 @@ const register = asyncHandler(async (req, res) => {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        profilePicture: user.profilePicture,
       },
     },
   });

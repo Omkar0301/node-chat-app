@@ -1,7 +1,12 @@
 const asyncHandler = require("express-async-handler");
 const User = require("../models/User");
+const fs = require("fs");
+const path = require("path");
 const { NotFoundError, BadRequestError } = require("../utils/errors");
-const { uploadToCloudinary } = require("../services/cloudinary");
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} = require("../services/cloudinary");
 
 // Get all users (except current user)
 const getUsers = asyncHandler(async (req, res) => {
@@ -154,55 +159,86 @@ const getUserById = asyncHandler(async (req, res) => {
 // Update user profile picture
 const updateProfilePicture = asyncHandler(async (req, res) => {
   if (!req.file) {
-    throw new BadRequestError("No file uploaded");
+    throw new BadRequestError("No file was uploaded");
   }
 
+  const filePath = path.normalize(req.file.path);
+
+  if (!fs.existsSync(filePath)) {
+    throw new BadRequestError("Error processing the uploaded file");
+  }
+
+  let oldProfilePictureUrl = null;
   let profilePictureUrl;
+
   try {
-    const result = await uploadToCloudinary(req.file.path);
+    // Get the current user to find the old profile picture
+    const currentUser = await User.findById(req.user.userId).select(
+      "profilePicture"
+    );
+    oldProfilePictureUrl = currentUser?.profilePicture;
+
+    // Upload the new profile picture
+    const result = await uploadToCloudinary(filePath);
+
+    if (!result?.secure_url) {
+      throw new Error("Invalid response from Cloudinary");
+    }
+
     profilePictureUrl = result.secure_url;
+
+    // Update the user's profile with the new picture URL
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { $set: { profilePicture: profilePictureUrl } },
+      { new: true, runValidators: true }
+    )
+      .select("-password -refreshToken -__v")
+      .lean();
+
+    // If we have an old profile picture, delete it from Cloudinary
+    if (oldProfilePictureUrl) {
+      await deleteFromCloudinary(oldProfilePictureUrl);
+    }
+
+    // Emit the update to all connected clients
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user:profilePicUpdated", {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profilePicture: user.profilePicture,
+        online: user.online,
+        lastSeen: user.lastSeen,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        profilePicture: user.profilePicture,
+      },
+    });
+
+    return; // Return after sending the response
   } catch (error) {
-    console.error("Error uploading profile picture:", error);
-    throw new BadRequestError("Failed to upload profile picture");
+    console.error("Error updating profile picture:", error);
+    throw new BadRequestError(
+      `Failed to update profile picture: ${error.message}`
+    );
+  } finally {
+    // Clean up the temporary file
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (cleanupError) {
+        console.error("Error during file cleanup:", cleanupError);
+      }
+    }
   }
-
-  const user = await User.findByIdAndUpdate(
-    req.user.userId,
-    { $set: { profilePicture: profilePictureUrl } },
-    { new: true, runValidators: true },
-  )
-    .select("-password -refreshToken -__v")
-    .lean();
-
-  if (!user) {
-    throw new NotFoundError("User not found");
-  }
-
-  // Format the response
-  const userResponse = {
-    id: user._id,
-    username: user.username,
-    email: user.email,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    profilePicture: user.profilePicture,
-    online: user.online,
-    lastSeen: user.lastSeen,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
-  };
-
-  // Emit the update to all connected clients
-  const io = req.app.get("io");
-  if (io) {
-    io.emit("user:profilePicUpdated", userResponse);
-  }
-
-  res.json({
-    success: true,
-    data: userResponse,
-    message: "Profile picture updated successfully",
-  });
 });
 
 // Change password
@@ -243,7 +279,7 @@ const uploadProfilePicture = asyncHandler(async (req, res) => {
   const user = await User.findByIdAndUpdate(
     req.user.userId,
     { profilePicture: result.secure_url },
-    { new: true },
+    { new: true }
   ).select("-password -refreshToken");
 
   res.json({
@@ -265,7 +301,7 @@ const deleteAccount = asyncHandler(async (req, res) => {
 // Get current user profile
 const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.userId).select(
-    "-password -refreshToken -__v",
+    "-password -refreshToken -__v"
   );
 
   if (!user) {

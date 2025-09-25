@@ -3,21 +3,23 @@ const { check } = require("express-validator");
 const authController = require("../controllers/auth");
 const { validate } = require("../middleware/validation");
 const { auth } = require("../middleware/auth");
+const { uploadFile } = require("../middleware/upload");
 
 const router = express.Router();
 
 router.post(
   "/register",
+  uploadFile("profilePicture"),
   [
     check("username", "Username is required").not().isEmpty(),
     check("email", "Please include a valid email").isEmail(),
     check(
       "password",
-      "Please enter a password with 6 or more characters",
+      "Please enter a password with 6 or more characters"
     ).isLength({ min: 6 }),
   ],
   validate,
-  authController.register,
+  authController.register
 );
 
 router.post(
@@ -27,7 +29,7 @@ router.post(
     check("password", "Password is required").exists(),
   ],
   validate,
-  authController.login,
+  authController.login
 );
 
 router.get("/me", auth, authController.getMe);

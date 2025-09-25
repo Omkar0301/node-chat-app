@@ -13,6 +13,7 @@ const { sanitizeRequest } = require("./utils/validation");
 const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/users");
+const groupRoutes = require("./routes/groups");
 const messageRoutes = require("./routes/message");
 const { initializeSocket } = require("./sockets");
 const { auth } = require("./middleware/auth");
@@ -39,7 +40,7 @@ const { auth } = require("./middleware/auth");
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
-    }),
+    })
   );
 
   // Request logging
@@ -71,6 +72,7 @@ const { auth } = require("./middleware/auth");
   app.use("/api/auth", authLimiter, authRoutes);
   app.use("/api/users", auth, userRoutes);
   app.use("/api/message", auth, messageRoutes);
+  app.use("/api/groups", auth, groupRoutes);
 
   // 404 handler
   app.use((req, res, next) => {
