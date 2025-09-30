@@ -1,6 +1,7 @@
 const Message = require("../../../models/Message");
 const { connections } = require("../../store");
 const { getDirectUnreadCounts } = require("../../../utils/messageUtils");
+const { deleteFromCloudinary } = require("../../../services/cloudinary");
 
 const {
   checkDirectParticipant,
@@ -16,7 +17,7 @@ function registerMessageHandlers(io, socket) {
   // Direct message handler
   socket.on("message:send", async (data, callback) => {
     try {
-      const { to, content, attachments, replyTo } = data || {};
+      const { to, content, attachments = [], replyTo } = data || {};
       if (!to) throw new Error("Recipient required");
       const trimmedContent = (content || "").trim();
       if (!trimmedContent && (!attachments || attachments.length === 0)) {
@@ -25,27 +26,58 @@ function registerMessageHandlers(io, socket) {
       await validateRecipient(to);
       validateAttachments(attachments);
       await validateReplyTo(replyTo, socket.user._id, to);
-      const message = new Message({
-        sender: socket.user._id,
-        recipient: to,
-        content: trimmedContent,
-        type: "direct",
-        status: "sent",
-        attachments: attachments || [],
-        replyTo: replyTo || null,
-      });
-      await message.save();
+
+      // Function to create and save a single message
+      const createAndSendMessage = async (
+        messageContent,
+        messageAttachments = []
+      ) => {
+        const message = new Message({
+          sender: socket.user._id,
+          recipient: to,
+          content: messageContent,
+          type: "direct",
+          status: "sent",
+          attachments: messageAttachments,
+          replyTo: replyTo || null,
+        });
+        await message.save();
+        return message;
+      };
+
       const recipientRoom = `user_${to.toString()}`;
       const isRecipientOnline = connections.has(to.toString());
-      let updatedMessage = message;
-      if (isRecipientOnline) {
-        message.status = "delivered";
-        await message.save();
-        updatedMessage = await Message.findById(message._id);
-        io.to(recipientRoom).emit("message:receive", updatedMessage);
+      const messages = [];
+
+      if (attachments.length > 0) {
+        // Create a message for each attachment
+        for (const attachment of attachments) {
+          const message = await createAndSendMessage(trimmedContent, [
+            attachment,
+          ]);
+          messages.push(message);
+        }
+      } else {
+        // If no attachments, just create a single message with the content
+        const message = await createAndSendMessage(trimmedContent, []);
+        messages.push(message);
       }
-      io.to(`user_${userIdStr}`).emit("message:sent", updatedMessage);
-      callback?.({ success: true, data: updatedMessage });
+
+      // Emit events for all created messages
+      const updatedMessages = [];
+      for (const message of messages) {
+        let updatedMessage = message;
+        if (isRecipientOnline) {
+          message.status = "delivered";
+          await message.save();
+          updatedMessage = await Message.findById(message._id);
+          io.to(recipientRoom).emit("message:receive", updatedMessage);
+        }
+        io.to(`user_${userIdStr}`).emit("message:sent", updatedMessage);
+        updatedMessages.push(updatedMessage);
+      }
+
+      callback?.({ success: true, data: updatedMessages });
     } catch (error) {
       console.error("Error sending message:", error);
       callback?.({
@@ -63,7 +95,7 @@ function registerMessageHandlers(io, socket) {
 
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
 
@@ -74,8 +106,8 @@ function registerMessageHandlers(io, socket) {
 
       // Populate sender & recipient details
       const populatedMessage = await Message.findById(message._id)
-        .populate("sender", "_id fullName email")
-        .populate("recipient", "_id fullName email");
+        .populate("sender", "_id firstName lastName email")
+        .populate("recipient", "_id firstName lastName email");
 
       const payload = {
         messageId: populatedMessage._id,
@@ -86,11 +118,11 @@ function registerMessageHandlers(io, socket) {
 
       io.to(`user_${message.sender.toString()}`).emit(
         "message:status",
-        payload,
+        payload
       );
       io.to(`user_${message.recipient.toString()}`).emit(
         "message:status",
-        payload,
+        payload
       );
     } catch (error) {
       console.error("Error confirming message delivery:", error);
@@ -115,7 +147,7 @@ function registerMessageHandlers(io, socket) {
           status: { $in: ["sent", "delivered"] },
           type: "direct",
         },
-        { $set: { status: "delivered" } },
+        { $set: { status: "delivered" } }
       );
 
       callback?.({ success: true });
@@ -133,7 +165,7 @@ function registerMessageHandlers(io, socket) {
 
       const { message } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       if (message.recipient?.toString() !== socket.user._id.toString()) return;
 
@@ -144,8 +176,8 @@ function registerMessageHandlers(io, socket) {
       }
 
       const populatedMessage = await Message.findById(message._id)
-        .populate("sender", "_id fullName email")
-        .populate("recipient", "_id fullName email");
+        .populate("sender", "_id firstName lastName email")
+        .populate("recipient", "_id firstName lastName email");
 
       const payload = {
         messageId: populatedMessage._id,
@@ -157,11 +189,11 @@ function registerMessageHandlers(io, socket) {
 
       io.to(`user_${message.sender.toString()}`).emit(
         "message:status",
-        payload,
+        payload
       );
       io.to(`user_${message.recipient.toString()}`).emit(
         "message:status",
-        payload,
+        payload
       );
     } catch (error) {
       console.error("Error confirming message read:", error);
@@ -175,7 +207,7 @@ function registerMessageHandlers(io, socket) {
       if (!messageId) throw new Error("messageId required");
       const { message, isSender } = await checkDirectParticipant(
         messageId,
-        socket.user._id,
+        socket.user._id
       );
       const currentUserId = socket.user._id.toString();
       const otherId = isSender
@@ -195,6 +227,21 @@ function registerMessageHandlers(io, socket) {
             message.status = "read";
           }
           await message.save();
+
+          // Delete attachments from Cloudinary if present
+          if (message.attachments && message.attachments.length > 0) {
+            await Promise.all(
+              message.attachments.map(async (attachment) => {
+                try {
+                  await deleteFromCloudinary(attachment.url);
+                } catch (err) {
+                  console.error("Error deleting attachment:", err);
+                }
+              })
+            );
+            message.attachments = []; // Clear attachments after deletion
+            await message.save();
+          }
         }
 
         // Notify sender
@@ -217,7 +264,7 @@ function registerMessageHandlers(io, socket) {
       } else {
         // Delete for me only
         const alreadyHidden = (message.deletedFor || []).some(
-          (u) => u.toString() === currentUserId,
+          (u) => u.toString() === currentUserId
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
@@ -280,7 +327,7 @@ function registerMessageHandlers(io, socket) {
           type: "direct",
           deletedFor: { $ne: currentUserId },
         },
-        { $addToSet: { deletedFor: currentUserId } },
+        { $addToSet: { deletedFor: currentUserId } }
       );
       io.to(`user_${currentUserId.toString()}`).emit("chat:cleared", {
         withUserId,

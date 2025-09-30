@@ -1,5 +1,6 @@
 const cloudinary = require("cloudinary").v2;
 const fs = require("fs");
+const path = require("path");
 
 // Configure Cloudinary
 cloudinary.config({
@@ -9,7 +10,7 @@ cloudinary.config({
 });
 
 // Upload file to Cloudinary
-const uploadToCloudinary = async (filePath, folder = "chat-app") => {
+const uploadToCloudinary = async (filePath, folder = "message-attachments") => {
   try {
     if (!filePath) {
       throw new Error("File path is required");
@@ -19,13 +20,24 @@ const uploadToCloudinary = async (filePath, folder = "chat-app") => {
       throw new Error("File does not exist: " + filePath);
     }
 
-    const result = await cloudinary.uploader.upload(filePath, {
+    // Get file extension to determine resource type
+    const ext = path.extname(filePath).toLowerCase();
+    const isImage = [".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext);
+    const isVideo = [".mp4", ".webm", ".mov", ".avi"].includes(ext);
+
+    const uploadOptions = {
       folder,
-      resource_type: "auto",
-    });
+      resource_type: isImage ? "image" : isVideo ? "video" : "raw",
+      use_filename: true,
+      unique_filename: false,
+      overwrite: false,
+    };
+
+    const result = await cloudinary.uploader.upload(filePath, uploadOptions);
 
     return result;
   } catch (error) {
+    console.error("Cloudinary upload error:", error);
     throw error;
   }
 };

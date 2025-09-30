@@ -1,5 +1,10 @@
 const Message = require("../models/Message");
 const { validationResult } = require("express-validator");
+const { uploadToCloudinary } = require("../services/cloudinary");
+const fs = require("fs");
+const path = require("path");
+const asyncHandler = require("express-async-handler");
+const { BadRequestError } = require("../utils/errors");
 
 const getConversation = async (req, res) => {
   try {
@@ -30,8 +35,11 @@ const getConversation = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate("sender", "name email")
-        .populate("recipient", "name email"),
+        .populate("sender", "username firstName lastName email profilePicture")
+        .populate(
+          "recipient",
+          "username firstName lastName email profilePicture"
+        ),
       Message.countDocuments({
         $and: [
           {
@@ -94,8 +102,8 @@ const getGroupConversation = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate("sender", "name email")
-        .populate("group", "name"),
+        .populate("sender", "username firstName lastName email profilePicture")
+        .populate("group", "name photo"),
       Message.countDocuments({
         $and: [
           { group: groupId },
@@ -192,9 +200,11 @@ const getConversations = async (req, res) => {
           _id: 0,
           user: {
             _id: "$user._id",
-            name: "$user.name",
+            username: "$user.username",
+            firstName: "$user.firstName",
+            lastName: "$user.lastName",
             email: "$user.email",
-            avatar: "$user.avatar",
+            profilePicture: "$user.profilePicture",
           },
           latestMessage: 1,
           unreadCount: 1,
@@ -202,13 +212,14 @@ const getConversations = async (req, res) => {
       },
     ]);
 
-    const total = await Message.distinct("recipient", {
+    const distinctRecipients = await Message.distinct("recipient", {
       $and: [
         { $or: [{ sender: currentUser }, { recipient: currentUser }] },
         { deletedFor: { $ne: currentUser } },
         { isDeleted: { $ne: true } },
       ],
-    }).countDocuments();
+    });
+    const total = distinctRecipients.length;
 
     const totalPages = Math.ceil(total / limit);
 
@@ -271,9 +282,66 @@ const markMessagesAsRead = async (req, res) => {
   }
 };
 
+const uploadAttachment = asyncHandler(async (req, res) => {
+  const files = req.files;
+
+  if (!files || files.length === 0) {
+    throw new BadRequestError("No files uploaded");
+  }
+
+  const uploads = await Promise.all(
+    files.map(async (file) => {
+      const filePath = path.normalize(file.path);
+      const ext = path.extname(file.originalname).toLowerCase();
+
+      // Determine resource type based on file extension
+      const isImage = [".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext);
+      const isVideo = [".mp4", ".webm", ".mov", ".avi"].includes(ext);
+      const resourceType = isImage ? "image" : isVideo ? "video" : "raw";
+
+      // Upload to Cloudinary with the correct resource type
+      const result = await uploadToCloudinary(filePath, "message-attachments");
+
+      if (!result?.secure_url) {
+        throw new Error("Failed to upload attachment");
+      }
+
+      // Clean up the temporary file
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (error) {
+        console.error("Error deleting temporary file:", error);
+      }
+
+      // Determine the file type for the response
+      let type;
+      if (isImage) {
+        type = "image";
+      } else if (isVideo) {
+        type = "video";
+      } else {
+        type = "document";
+      }
+
+      return {
+        url: result.secure_url,
+        type,
+        publicId: result.public_id,
+        format: ext.replace(".", ""),
+      };
+    })
+  );
+
+  res.json({
+    success: true,
+    data: uploads,
+  });
+});
+
 module.exports = {
   getConversation,
   getGroupConversation,
   getConversations,
   markMessagesAsRead,
+  uploadAttachment,
 };

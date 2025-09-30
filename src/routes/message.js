@@ -7,7 +7,9 @@ const {
   getGroupConversation,
   getConversations,
   markMessagesAsRead,
+  uploadAttachment,
 } = require("../controllers/message");
+const { uploadFiles } = require("../middleware/upload");
 
 const router = express.Router();
 
@@ -74,6 +76,13 @@ router.patch(
   ],
   validate,
   markMessagesAsRead
+);
+
+router.post(
+  "/upload-attachment",
+  auth,
+  uploadFiles("attachments", 5), // Max 5 attachments per upload
+  uploadAttachment
 );
 
 module.exports = router;

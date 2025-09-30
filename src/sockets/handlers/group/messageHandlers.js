@@ -1,6 +1,8 @@
 const Message = require("../../../models/Message");
 const { connections } = require("../../store");
 const { getGroupUnreadCounts } = require("../../../utils/messageUtils");
+const { deleteFromCloudinary } = require("../../../services/cloudinary");
+
 const {
   checkGroupMembership,
   getUserMap,
@@ -42,7 +44,7 @@ function registerMessageHandlers(io, socket) {
             "messageStatus.$.status": "delivered",
             "messageStatus.$.deliveredAt": new Date(),
           },
-        },
+        }
       );
 
       callback?.({ success: true });
@@ -55,91 +57,137 @@ function registerMessageHandlers(io, socket) {
   // Group message handler
   socket.on("group:send", async (data, callback) => {
     try {
-      const { groupId, content, attachments, replyTo } = data || {};
+      const { groupId, content, attachments = [], replyTo } = data || {};
       if (!groupId) throw new Error("groupId required");
       const trimmedContent = (content || "").trim();
       const { group } = await checkGroupMembership(groupId, socket.user._id);
       validateAttachments(attachments);
       await validateReplyTo(replyTo, groupId);
+
       if (!socket.rooms.has(`group_${groupId}`)) {
         await socket.join(`group_${groupId}`);
         console.log(`User ${userIdStr} joined group_${groupId} via group:send`);
       }
+
       const now = new Date();
       const memberIds = group.members
         .map((m) => m.toString())
         .filter((id) => id !== userIdStr);
-      const message = new Message({
-        sender: socket.user._id,
-        group: groupId,
-        content: trimmedContent,
-        type: "group",
-        status: "sent",
-        attachments: attachments || [],
-        replyTo: replyTo || null,
-        messageStatus: memberIds.map((id) => ({
-          user: id,
+
+      // Function to create and save a single message
+      const createAndSendMessage = async (
+        messageContent,
+        messageAttachments = []
+      ) => {
+        const message = new Message({
+          sender: socket.user._id,
+          group: groupId,
+          content: messageContent,
+          type: "group",
           status: "sent",
-          sentAt: now,
-        })),
-      });
-      await message.save();
+          attachments: messageAttachments,
+          replyTo: replyTo || null,
+          messageStatus: memberIds.map((id) => ({
+            user: id,
+            status: "sent",
+            sentAt: now,
+          })),
+        });
+        await message.save();
+        return message;
+      };
+
+      const messages = [];
+
+      if (attachments.length > 0) {
+        // Create a message for each attachment
+        for (const attachment of attachments) {
+          const message = await createAndSendMessage(trimmedContent, [
+            attachment,
+          ]);
+          messages.push(message);
+        }
+      } else {
+        // If no attachments, just create a single message with the content
+        const message = await createAndSendMessage(trimmedContent, []);
+        messages.push(message);
+      }
       const userMap = await getUserMap(
-        memberIds.map((id) => new mongoose.Types.ObjectId(id)),
+        memberIds.map((id) => new mongoose.Types.ObjectId(id))
       );
-      const bulkOps = [];
-      for (const memberId of memberIds) {
-        const memberSocketIds = connections.get(memberId);
-        if (memberSocketIds) {
-          bulkOps.push({
-            updateOne: {
-              filter: { _id: message._id, "messageStatus.user": memberId },
-              update: {
-                $set: {
-                  "messageStatus.$.status": "delivered",
-                  "messageStatus.$.deliveredAt": new Date(),
-                },
-              },
-            },
-          });
-          const member = userMap.get(memberId);
-          memberSocketIds.forEach((socketId) => {
-            if (io.sockets.sockets.has(socketId)) {
-              io.to(socketId).emit("group:status", {
-                groupId,
-                messageId: message._id,
-                updatedBy: memberId,
-                status: {
-                  [memberId]: {
-                    status: "delivered",
-                    deliveredAt: new Date().toISOString(),
-                    user: member || null,
+
+      const updatedMessages = [];
+
+      // Process each message
+      for (const message of messages) {
+        const bulkOps = [];
+
+        // Update status for each recipient
+        for (const memberId of memberIds) {
+          const memberSocketIds = connections.get(memberId);
+          if (memberSocketIds) {
+            bulkOps.push({
+              updateOne: {
+                filter: { _id: message._id, "messageStatus.user": memberId },
+                update: {
+                  $set: {
+                    "messageStatus.$.status": "delivered",
+                    "messageStatus.$.deliveredAt": new Date(),
                   },
                 },
-                sender: userMap.get(userIdStr) || null,
-                receiver: member || null,
-              });
-            }
-          });
+              },
+            });
+
+            const member = userMap.get(memberId);
+            memberSocketIds.forEach((socketId) => {
+              if (io.sockets.sockets.has(socketId)) {
+                io.to(socketId).emit("group:status", {
+                  groupId,
+                  messageId: message._id,
+                  updatedBy: memberId,
+                  status: {
+                    [memberId]: {
+                      status: "delivered",
+                      deliveredAt: new Date().toISOString(),
+                      user: member || null,
+                    },
+                  },
+                  sender: userMap.get(userIdStr) || null,
+                  receiver: member || null,
+                });
+              }
+            });
+          }
+        }
+
+        // Update status in bulk
+        if (bulkOps.length > 0) {
+          await Message.bulkWrite(bulkOps);
+        }
+
+        // Get the updated message
+        const updatedMessage = await Message.findById(message._id);
+        updatedMessages.push(updatedMessage);
+
+        // Emit to all group members
+        for (const memberId of memberIds) {
+          const memberSocketIds = connections.get(memberId);
+          if (memberSocketIds) {
+            memberSocketIds.forEach((socketId) => {
+              if (io.sockets.sockets.has(socketId)) {
+                io.to(socketId).emit("group:receive", updatedMessage);
+              }
+            });
+          }
         }
       }
-      if (bulkOps.length > 0) {
-        await Message.bulkWrite(bulkOps);
-      }
-      const updatedMessage = await Message.findById(message._id);
-      for (const memberId of memberIds) {
-        const memberSocketIds = connections.get(memberId);
-        if (memberSocketIds) {
-          memberSocketIds.forEach((socketId) => {
-            if (io.sockets.sockets.has(socketId)) {
-              io.to(socketId).emit("group:receive", updatedMessage);
-            }
-          });
-        }
-      }
+
       // Emit to all devices of the sender
-      io.to(`user_${userIdStr}`).emit("group:sent", updatedMessage);
-      callback?.({ success: true, data: updatedMessage });
+      for (const updatedMessage of updatedMessages) {
+        io.to(`user_${userIdStr}`).emit("group:sent", updatedMessage);
+      }
+
+      callback?.({ success: true, data: updatedMessages });
     } catch (error) {
       console.error("Error sending group message:", error);
       callback?.({
@@ -171,7 +219,7 @@ function registerMessageHandlers(io, socket) {
       if (!socket.rooms.has(`group_${groupId}`)) {
         await socket.join(`group_${groupId}`);
         console.log(
-          `User ${userIdStr} re-joined group_${groupId} for read event`,
+          `User ${userIdStr} re-joined group_${groupId} for read event`
         );
       }
       const userMap = await getUserMap(group.members);
@@ -188,14 +236,14 @@ function registerMessageHandlers(io, socket) {
           continue;
         }
         const statusIndex = message.messageStatus.findIndex(
-          (s) => s.user.toString() === userIdStr,
+          (s) => s.user.toString() === userIdStr
         );
         if (
           statusIndex === -1 ||
           message.messageStatus[statusIndex].status === "read"
         ) {
           console.log(
-            `Message ${messageId} not applicable or already read by ${userIdStr}`,
+            `Message ${messageId} not applicable or already read by ${userIdStr}`
           );
           continue;
         }
@@ -216,7 +264,7 @@ function registerMessageHandlers(io, socket) {
       if (bulkOps.length > 0) {
         const result = await Message.bulkWrite(bulkOps);
         console.log(
-          `Updated ${result.modifiedCount} messages to read for user ${userIdStr} in group ${groupId}`,
+          `Updated ${result.modifiedCount} messages to read for user ${userIdStr} in group ${groupId}`
         );
       }
       const updatedMessages = await Message.find({
@@ -270,7 +318,7 @@ function registerMessageHandlers(io, socket) {
       }
       const { group, isAdmin, isCreator } = await checkGroupMembership(
         groupId,
-        socket.user._id,
+        socket.user._id
       );
       const message = await Message.findOne({
         _id: messageId,
@@ -286,7 +334,7 @@ function registerMessageHandlers(io, socket) {
       if (forEveryone) {
         if (!(isSender || isAdmin || isCreator)) {
           throw new Error(
-            "Only sender or admin/creator can delete for everyone",
+            "Only sender or admin/creator can delete for everyone"
           );
         }
         if (!message.isDeleted) {
@@ -299,6 +347,21 @@ function registerMessageHandlers(io, socket) {
             readAt: status.status !== "read" ? new Date() : status.readAt,
           }));
           await message.save();
+
+          // Delete attachments from Cloudinary if present
+          if (message.attachments && message.attachments.length > 0) {
+            await Promise.all(
+              message.attachments.map(async (attachment) => {
+                try {
+                  await deleteFromCloudinary(attachment.url);
+                } catch (err) {
+                  console.error("Error deleting attachment:", err);
+                }
+              })
+            );
+            message.attachments = []; // Clear attachments after deletion
+            await message.save();
+          }
         }
 
         io.to(`group_${groupId}`).emit("group:messageDeleted", {
@@ -310,7 +373,7 @@ function registerMessageHandlers(io, socket) {
         });
       } else {
         const alreadyHidden = (message.deletedFor || []).some(
-          (u) => u.toString() === userIdStr,
+          (u) => u.toString() === userIdStr
         );
         if (!alreadyHidden) {
           message.deletedFor = [...(message.deletedFor || []), socket.user._id];
@@ -342,7 +405,7 @@ function registerMessageHandlers(io, socket) {
         memberIds.map(async (memberId) => {
           const counts = await getGroupUnreadCounts(memberId);
           return { memberId, counts };
-        }),
+        })
       );
 
       memberCounts.forEach(({ memberId, counts }) => {
@@ -379,7 +442,7 @@ function registerMessageHandlers(io, socket) {
       const { group } = await checkGroupMembership(groupId, socket.user._id);
       const res = await Message.updateMany(
         { group: groupId, type: "group", deletedFor: { $ne: socket.user._id } },
-        { $addToSet: { deletedFor: socket.user._id } },
+        { $addToSet: { deletedFor: socket.user._id } }
       );
       io.to(`user_${userIdStr}`).emit("group:chatCleared", {
         groupId,
