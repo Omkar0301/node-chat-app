@@ -9,7 +9,7 @@ const router = express.Router();
 
 router.post(
   "/register",
-  uploadFile("profilePicture"),
+  uploadFile("profilePicture", false),
   [
     check("username", "Username is required").not().isEmpty(),
     check("email", "Please include a valid email").isEmail(),

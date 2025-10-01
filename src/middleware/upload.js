@@ -46,7 +46,7 @@ const upload = multer({
 });
 
 // Middleware to handle single file upload
-const uploadFile = (fieldName) => (req, res, next) => {
+const uploadFile = (fieldName, required = false) => (req, res, next) => {
   const uploadSingle = upload.single(fieldName);
 
   uploadSingle(req, res, (err) => {
@@ -61,11 +61,11 @@ const uploadFile = (fieldName) => (req, res, next) => {
       return next(new BadRequestError("Error uploading file"));
     }
 
-    if (!req.file) {
-      return next(new BadRequestError("No file was uploaded"));
+    if (required && !req.file) {
+      return next(new BadRequestError(`No file was uploaded for ${fieldName}`));
     }
 
-    if (!fs.existsSync(req.file.path)) {
+    if (req.file && !fs.existsSync(req.file.path)) {
       return next(new BadRequestError("Error processing uploaded file"));
     }
 
